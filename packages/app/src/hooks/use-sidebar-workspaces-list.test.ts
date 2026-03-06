@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  appendMissingOrderKeys,
   applyStoredOrdering,
   buildSidebarProjectsFromWorkspaces,
 } from './use-sidebar-workspaces-list'
@@ -46,6 +47,28 @@ describe('applyStoredOrdering', () => {
   })
 })
 
+describe('appendMissingOrderKeys', () => {
+  it('appends unseen keys while preserving existing order', () => {
+    const result = appendMissingOrderKeys({
+      currentOrder: ['project-b', 'project-a'],
+      visibleKeys: ['project-a', 'project-b', 'project-c'],
+    })
+
+    expect(result).toEqual(['project-b', 'project-a', 'project-c'])
+  })
+
+  it('returns the same array when there are no unseen keys', () => {
+    const currentOrder = ['project-a', 'project-b']
+
+    const result = appendMissingOrderKeys({
+      currentOrder,
+      visibleKeys: ['project-b', 'project-a'],
+    })
+
+    expect(result).toBe(currentOrder)
+  })
+})
+
 describe('buildSidebarProjectsFromWorkspaces', () => {
   it('uses workspace descriptor name and status directly', () => {
     const workspaces: WorkspaceDescriptor[] = [
@@ -69,5 +92,149 @@ describe('buildSidebarProjectsFromWorkspaces', () => {
     expect(projects[0]?.statusBucket).toBe('failed')
     expect(projects[0]?.workspaces[0]?.name).toBe('feat/hard-cut')
     expect(projects[0]?.workspaces[0]?.statusBucket).toBe('failed')
+  })
+
+  it('preserves stored project order even when activity changes', () => {
+    const initialWorkspaces: WorkspaceDescriptor[] = [
+      {
+        id: '/repo/b',
+        projectId: 'project-b',
+        name: 'feat/b',
+        status: 'running',
+        activityAt: new Date('2026-01-02T00:00:00.000Z'),
+      },
+      {
+        id: '/repo/a',
+        projectId: 'project-a',
+        name: 'feat/a',
+        status: 'running',
+        activityAt: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    ]
+
+    const seededOrder = appendMissingOrderKeys({
+      currentOrder: [],
+      visibleKeys: buildSidebarProjectsFromWorkspaces({
+        serverId: 'srv',
+        workspaces: initialWorkspaces,
+        projectOrder: [],
+        workspaceOrderByScope: {},
+      }).map((project) => project.projectKey),
+    })
+
+    const updatedProjects = buildSidebarProjectsFromWorkspaces({
+      serverId: 'srv',
+      workspaces: [
+        {
+          id: '/repo/b',
+          projectId: 'project-b',
+          name: 'feat/b',
+          status: 'running',
+          activityAt: new Date('2026-01-02T00:00:00.000Z'),
+        },
+        {
+          id: '/repo/a',
+          projectId: 'project-a',
+          name: 'feat/a',
+          status: 'running',
+          activityAt: new Date('2026-01-03T00:00:00.000Z'),
+        },
+      ],
+      projectOrder: seededOrder,
+      workspaceOrderByScope: {},
+    })
+
+    expect(updatedProjects.map((project) => project.projectKey)).toEqual(['project-b', 'project-a'])
+  })
+
+  it('appends new projects after the stored project order', () => {
+    const projects = buildSidebarProjectsFromWorkspaces({
+      serverId: 'srv',
+      workspaces: [
+        {
+          id: '/repo/c',
+          projectId: 'project-c',
+          name: 'feat/c',
+          status: 'running',
+          activityAt: new Date('2026-01-04T00:00:00.000Z'),
+        },
+        {
+          id: '/repo/b',
+          projectId: 'project-b',
+          name: 'feat/b',
+          status: 'running',
+          activityAt: new Date('2026-01-02T00:00:00.000Z'),
+        },
+        {
+          id: '/repo/a',
+          projectId: 'project-a',
+          name: 'feat/a',
+          status: 'running',
+          activityAt: new Date('2026-01-01T00:00:00.000Z'),
+        },
+      ],
+      projectOrder: ['project-b', 'project-a', 'project-c'],
+      workspaceOrderByScope: {},
+    })
+
+    expect(projects.map((project) => project.projectKey)).toEqual(['project-b', 'project-a', 'project-c'])
+  })
+
+  it('preserves stored workspace order when workspace activity changes', () => {
+    const initialProjects = buildSidebarProjectsFromWorkspaces({
+      serverId: 'srv',
+      workspaces: [
+        {
+          id: '/repo/main',
+          projectId: 'project-1',
+          name: 'main',
+          status: 'running',
+          activityAt: new Date('2026-01-02T00:00:00.000Z'),
+        },
+        {
+          id: '/repo/feature',
+          projectId: 'project-1',
+          name: 'feature',
+          status: 'running',
+          activityAt: new Date('2026-01-01T00:00:00.000Z'),
+        },
+      ],
+      projectOrder: ['project-1'],
+      workspaceOrderByScope: {},
+    })
+
+    const seededWorkspaceOrder = appendMissingOrderKeys({
+      currentOrder: [],
+      visibleKeys: initialProjects[0]?.workspaces.map((workspace) => workspace.workspaceKey) ?? [],
+    })
+
+    const projects = buildSidebarProjectsFromWorkspaces({
+      serverId: 'srv',
+      workspaces: [
+        {
+          id: '/repo/main',
+          projectId: 'project-1',
+          name: 'main',
+          status: 'running',
+          activityAt: new Date('2026-01-02T00:00:00.000Z'),
+        },
+        {
+          id: '/repo/feature',
+          projectId: 'project-1',
+          name: 'feature',
+          status: 'running',
+          activityAt: new Date('2026-01-03T00:00:00.000Z'),
+        },
+      ],
+      projectOrder: ['project-1'],
+      workspaceOrderByScope: {
+        'srv::project-1': seededWorkspaceOrder,
+      },
+    })
+
+    expect(projects[0]?.workspaces.map((workspace) => workspace.workspaceId)).toEqual([
+      '/repo/main',
+      '/repo/feature',
+    ])
   })
 })

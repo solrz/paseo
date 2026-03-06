@@ -6,6 +6,7 @@ import "@xterm/xterm/css/xterm.css";
 import type { ITheme } from "@xterm/xterm";
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import { TerminalEmulatorRuntime } from "../terminal/runtime/terminal-emulator-runtime";
+import { focusWithRetries } from "../utils/web-focus";
 import {
   summarizeTerminalText,
   terminalDebugLog,
@@ -343,7 +344,19 @@ export default function TerminalEmulator({
     if (focusRequestToken <= 0) {
       return;
     }
-    runtimeRef.current?.focus();
+    return focusWithRetries({
+      focus: () => {
+        runtimeRef.current?.focus();
+      },
+      isFocused: () => {
+        const root = rootRef.current;
+        if (!root) {
+          return false;
+        }
+        const active = typeof document !== "undefined" ? document.activeElement : null;
+        return active instanceof HTMLElement && root.contains(active);
+      },
+    });
   }, [focusRequestToken]);
 
   useEffect(() => {

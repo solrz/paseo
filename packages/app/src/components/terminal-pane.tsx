@@ -214,6 +214,7 @@ export function TerminalPane({
   const selectedTerminalIdRef = useRef<string | null>(selectedTerminalId);
   const pendingTerminalInputRef = useRef<PendingTerminalInput[]>([]);
   const keyboardRefitTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const lastAutoFocusKeyRef = useRef<string | null>(null);
 
   const updateSelectedTerminalId = useCallback(
     (next: string | null) => {
@@ -278,6 +279,21 @@ export function TerminalPane({
   const requestTerminalReflow = useCallback(() => {
     setResizeRequestToken((current) => current + 1);
   }, []);
+
+  useEffect(() => {
+    if (isMobile || !isScreenFocused || !selectedTerminalId) {
+      lastAutoFocusKeyRef.current = null;
+      return;
+    }
+
+    const nextFocusKey = `${scopeKey}:${selectedTerminalId}`;
+    if (lastAutoFocusKeyRef.current === nextFocusKey) {
+      return;
+    }
+
+    lastAutoFocusKeyRef.current = nextFocusKey;
+    requestTerminalFocus();
+  }, [isMobile, isScreenFocused, requestTerminalFocus, scopeKey, selectedTerminalId]);
 
   const clearKeyboardRefitTimeouts = useCallback(() => {
     if (keyboardRefitTimeoutsRef.current.length === 0) {

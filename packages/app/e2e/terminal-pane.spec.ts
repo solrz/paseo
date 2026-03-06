@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
+import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import {
   createAgent,
   createAgentInRepo,
@@ -7,6 +8,7 @@ import {
   setWorkingDirectory,
 } from "./helpers/app";
 import { createTempGitRepo } from "./helpers/workspace";
+import { getWorkspaceTabTestIds } from "./helpers/workspace-tabs";
 import { switchWorkspaceViaSidebar } from "./helpers/workspace-ui";
 
 function visibleTestId(page: Page, testId: string) {
@@ -264,6 +266,23 @@ async function readCurrentTerminalBuffer(page: Page): Promise<string> {
   }
 }
 
+async function expectTerminalFocused(page: Page): Promise<void> {
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        const surface = document.querySelector<HTMLElement>(
+          '[data-testid="terminal-surface"]'
+        );
+        if (!surface) {
+          return false;
+        }
+        const active = document.activeElement;
+        return active instanceof HTMLElement && surface.contains(active);
+      });
+    })
+    .toBe(true);
+}
+
 async function expectCurrentTerminalBufferToContain(page: Page, marker: string): Promise<void> {
   await expect
     .poll(async () => await readCurrentTerminalBuffer(page), { timeout: 30000 })
@@ -376,11 +395,7 @@ test("new terminal does not inherit output from the previously selected terminal
       directory: repo.path,
       prompt: "hello",
     });
-    await switchWorkspaceViaSidebar({
-      page,
-      serverId,
-      targetWorkspacePath: repo.path,
-    });
+    await page.goto(buildHostWorkspaceRoute(serverId, repo.path));
     await expect(page.getByTestId("workspace-new-terminal-tab").first()).toBeVisible({
       timeout: 30000,
     });
@@ -398,6 +413,74 @@ test("new terminal does not inherit output from the previously selected terminal
     const secondMarker = `terminal-isolation-two-${Date.now()}`;
     await runTerminalCommandAndWaitForBuffer(page, `echo ${secondMarker}`, secondMarker);
     await expectCurrentTerminalBufferNotToContain(page, firstMarker);
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+test("workspace terminal tabs auto-focus on create and switch on desktop web", async ({
+  page,
+}) => {
+  const repo = await createTempGitRepo("paseo-e2e-terminal-focus-");
+
+  try {
+    const serverId = process.env.E2E_SERVER_ID;
+    if (!serverId) {
+      throw new Error("E2E_SERVER_ID is not set.");
+    }
+
+    await createAgentInRepo(page, {
+      directory: repo.path,
+      prompt: "hello",
+    });
+    await page.goto(buildHostWorkspaceRoute(serverId, repo.path));
+    await expect(page.getByTestId("workspace-new-terminal-tab").first()).toBeVisible({
+      timeout: 30000,
+    });
+
+    await page.getByTestId("workspace-new-terminal-tab").first().click();
+    await waitForTerminalAttachToSettle(page);
+    await expectTerminalFocused(page);
+
+    const firstMarker = `terminal-focus-one-${Date.now()}`;
+    await page.keyboard.type(`echo ${firstMarker}`, { delay: 1 });
+    await page.keyboard.press("Enter");
+    await expectCurrentTerminalBufferToContain(page, firstMarker);
+
+    const terminalTabIdsBeforeSecondCreate = (await getWorkspaceTabTestIds(page)).filter((id) =>
+      id.startsWith("workspace-tab-terminal_")
+    );
+
+    await page.getByTestId("workspace-new-terminal-tab").first().click();
+    await waitForTerminalAttachToSettle(page);
+    await expectTerminalFocused(page);
+
+    const terminalTabIdsAfterSecondCreate = (await getWorkspaceTabTestIds(page)).filter((id) =>
+      id.startsWith("workspace-tab-terminal_")
+    );
+    const secondTerminalTabId = terminalTabIdsAfterSecondCreate.find(
+      (id) => !terminalTabIdsBeforeSecondCreate.includes(id)
+    );
+    const firstTerminalTabId = terminalTabIdsBeforeSecondCreate[0];
+
+    if (!firstTerminalTabId || !secondTerminalTabId) {
+      throw new Error("Expected two distinct terminal tabs to exist.");
+    }
+
+    const secondMarker = `terminal-focus-two-${Date.now()}`;
+    await page.keyboard.type(`echo ${secondMarker}`, { delay: 1 });
+    await page.keyboard.press("Enter");
+    await expectCurrentTerminalBufferToContain(page, secondMarker);
+
+    await page.getByTestId(firstTerminalTabId).first().click();
+    await waitForTerminalAttachToSettle(page);
+    await expectTerminalFocused(page);
+    await expectCurrentTerminalBufferToContain(page, firstMarker);
+
+    await page.getByTestId(secondTerminalTabId).first().click();
+    await waitForTerminalAttachToSettle(page);
+    await expectTerminalFocused(page);
+    await expectCurrentTerminalBufferToContain(page, secondMarker);
   } finally {
     await repo.cleanup();
   }

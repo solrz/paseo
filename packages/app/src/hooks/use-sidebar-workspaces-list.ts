@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 import { useSessionStore } from '@/stores/session-store'
 import { getHostRuntimeStore } from '@/runtime/host-runtime'
 import { useSidebarOrderStore } from '@/stores/sidebar-order-store'
@@ -217,6 +217,23 @@ export function applyStoredOrdering<T>(input: {
   return ordered
 }
 
+export function appendMissingOrderKeys(input: {
+  currentOrder: string[]
+  visibleKeys: string[]
+}): string[] {
+  if (input.visibleKeys.length === 0) {
+    return input.currentOrder
+  }
+
+  const existingKeys = new Set(input.currentOrder)
+  const missingKeys = input.visibleKeys.filter((key) => !existingKeys.has(key))
+  if (missingKeys.length === 0) {
+    return input.currentOrder
+  }
+
+  return [...input.currentOrder, ...missingKeys]
+}
+
 function getWorkspaceOrderScopeKey(serverId: string, projectKey: string): string {
   return `${serverId.trim()}::${projectKey.trim()}`
 }
@@ -295,6 +312,35 @@ export function useSidebarWorkspacesList(options?: {
       workspaceOrderByScope: persistedWorkspaceOrderByScope,
     })
   }, [persistedProjectOrder, persistedWorkspaceOrderByScope, serverId, sessionWorkspaces])
+
+  useEffect(() => {
+    if (!serverId || projects.length === 0) {
+      return
+    }
+
+    const nextProjectOrder = appendMissingOrderKeys({
+      currentOrder: persistedProjectOrder,
+      visibleKeys: projects.map((project) => project.projectKey),
+    })
+    if (nextProjectOrder !== persistedProjectOrder) {
+      useSidebarOrderStore.getState().setProjectOrder(serverId, nextProjectOrder)
+    }
+
+    for (const project of projects) {
+      const workspaceOrderScopeKey = getWorkspaceOrderScopeKey(serverId, project.projectKey)
+      const persistedWorkspaceOrder =
+        persistedWorkspaceOrderByScope[workspaceOrderScopeKey] ?? EMPTY_ORDER
+      const nextWorkspaceOrder = appendMissingOrderKeys({
+        currentOrder: persistedWorkspaceOrder,
+        visibleKeys: project.workspaces.map((workspace) => workspace.workspaceKey),
+      })
+      if (nextWorkspaceOrder !== persistedWorkspaceOrder) {
+        useSidebarOrderStore
+          .getState()
+          .setWorkspaceOrder(serverId, project.projectKey, nextWorkspaceOrder)
+      }
+    }
+  }, [persistedProjectOrder, persistedWorkspaceOrderByScope, projects, serverId])
 
   const refreshAll = useCallback(() => {
     if (!isActive || !serverId || connectionStatus !== 'online' || !enabled) {
