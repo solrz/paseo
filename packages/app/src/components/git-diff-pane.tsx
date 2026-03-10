@@ -1322,6 +1322,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
   },
   diffStatusContainer: {
+    paddingVertical: 1.5,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },

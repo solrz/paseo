@@ -95,7 +95,7 @@ export function useTauriDragHandlers() {
       // Only handle primary button, ignore if clicking on interactive elements.
       // Tauri docs recommend using `e.detail` on mousedown for double-click maximize.
       if (e.defaultPrevented) return;
-      if (typeof e.buttons === "number" ? e.buttons !== 1 : e.button !== 0) return;
+      if (e.button !== 0) return;
       const target = e.target instanceof Element ? e.target : null;
       if (target?.closest(NON_DRAGGABLE_SELECTOR)) return;
 

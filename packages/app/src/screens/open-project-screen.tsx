@@ -7,26 +7,30 @@ import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { usePanelStore } from "@/stores/panel-store";
+import { getIsTauriMac } from "@/constants/layout";
+import { useTrafficLightPadding } from "@/utils/tauri-window";
 
 export function OpenProjectScreen({ serverId: _serverId }: { serverId: string }) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const setProjectPickerOpen = useKeyboardShortcutsStore(
-    (s) => s.setProjectPickerOpen
-  );
+  const trafficLightPadding = useTrafficLightPadding();
+  const desktopAgentListOpen = usePanelStore((s) => s.desktop.agentListOpen);
   const openAgentList = usePanelStore((s) => s.openAgentList);
+  const setProjectPickerOpen = useKeyboardShortcutsStore((s) => s.setProjectPickerOpen);
+
+  const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const needsTrafficLightInset = !isMobile && !desktopAgentListOpen && getIsTauriMac();
+  const trafficLightInset = needsTrafficLightInset ? trafficLightPadding.left : 0;
 
   useEffect(() => {
-    const isMobile =
-      UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
     if (!isMobile) {
       openAgentList();
     }
-  }, [openAgentList]);
+  }, [isMobile, openAgentList]);
 
   return (
     <View style={styles.container}>
-      <View style={[styles.menuToggle, { paddingTop: insets.top }]}>
+      <View style={[styles.menuToggle, { paddingTop: insets.top, paddingLeft: trafficLightInset }]}>
         <SidebarMenuToggle />
       </View>
       <View style={styles.content}>

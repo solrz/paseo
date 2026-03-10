@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.20 - 2026-03-10
+### Added
+- Added workspace sidebar git actions with quick diff stats and archive controls.
+- Added refreshed website downloads and homepage presentation for desktop installs.
+
+### Improved
+- Desktop release packaging now rebuilds and validates the bundled managed runtime during CI, improving installer reliability for macOS users.
+- Improved desktop and web stream rendering, settings polish, and React 19.1.4 compatibility.
+
+### Fixed
+- Fixed Claude interrupt/restart regressions and strengthened managed-daemon smoke coverage for desktop releases.
+
 ## 0.1.19 - 2026-03-09
 ### Added
 - Added a draft GitHub release flow so maintainers can upload and review desktop and Android release assets before publishing the final release.
