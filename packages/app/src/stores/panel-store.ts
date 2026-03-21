@@ -42,6 +42,10 @@ export interface ExplorerCheckoutContext {
   isGit: boolean;
 }
 
+export const DEFAULT_SIDEBAR_WIDTH = 320;
+export const MIN_SIDEBAR_WIDTH = 200;
+export const MAX_SIDEBAR_WIDTH = 600;
+
 export const DEFAULT_EXPLORER_SIDEBAR_WIDTH = 400;
 export const MIN_EXPLORER_SIDEBAR_WIDTH = 280;
 // Upper bound is intentionally generous; desktop resizing enforces a min-chat-width constraint.
@@ -62,6 +66,7 @@ interface PanelState {
   explorerTab: ExplorerTab;
   explorerTabByCheckout: Record<string, ExplorerTab>;
   activeExplorerCheckout: ExplorerCheckoutContext | null;
+  sidebarWidth: number;
   explorerWidth: number;
   explorerSortOption: SortOption;
   explorerFilesSplitRatio: number;
@@ -79,6 +84,7 @@ interface PanelState {
   setExplorerTabForCheckout: (params: ExplorerCheckoutContext & { tab: ExplorerTab }) => void;
   activateExplorerTabForCheckout: (checkout: ExplorerCheckoutContext) => void;
   setActiveExplorerCheckout: (checkout: ExplorerCheckoutContext | null) => void;
+  setSidebarWidth: (width: number) => void;
   setExplorerWidth: (width: number) => void;
   setExplorerSortOption: (option: SortOption) => void;
   setExplorerFilesSplitRatio: (ratio: number) => void;
@@ -89,6 +95,10 @@ function clampNumber(value: number, min: number, max: number): number {
     return min;
   }
   return Math.max(min, Math.min(max, value));
+}
+
+function clampSidebarWidth(width: number): number {
+  return clampNumber(width, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
 }
 
 function clampWidth(width: number): number {
@@ -129,6 +139,7 @@ export const usePanelStore = create<PanelState>()(
       explorerTab: "changes",
       explorerTabByCheckout: {},
       activeExplorerCheckout: null,
+      sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
       explorerWidth: DEFAULT_EXPLORER_SIDEBAR_WIDTH,
       explorerSortOption: "name",
       explorerFilesSplitRatio: DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
@@ -244,6 +255,7 @@ export const usePanelStore = create<PanelState>()(
           }
           return { activeExplorerCheckout: checkout };
         }),
+      setSidebarWidth: (width) => set({ sidebarWidth: clampSidebarWidth(width) }),
       setExplorerWidth: (width) => set({ explorerWidth: clampWidth(width) }),
       setExplorerSortOption: (option) => set({ explorerSortOption: option }),
       setExplorerFilesSplitRatio: (ratio) =>
@@ -255,7 +267,7 @@ export const usePanelStore = create<PanelState>()(
     }),
     {
       name: "panel-state",
-      version: 5,
+      version: 6,
       storage: createJSONStorage(() => AsyncStorage),
       migrate: (persistedState, version) => {
         const state = persistedState as Partial<PanelState> & Record<string, unknown>;
@@ -310,6 +322,10 @@ export const usePanelStore = create<PanelState>()(
           state.explorerTabByCheckout = next;
         }
 
+        if (version < 6 || typeof state.sidebarWidth !== "number") {
+          state.sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
+        }
+
         state.activeExplorerCheckout = null;
 
         return state as PanelState;
@@ -319,6 +335,7 @@ export const usePanelStore = create<PanelState>()(
         desktop: state.desktop,
         explorerTab: state.explorerTab,
         explorerTabByCheckout: state.explorerTabByCheckout,
+        sidebarWidth: state.sidebarWidth,
         explorerWidth: state.explorerWidth,
         explorerSortOption: state.explorerSortOption,
         explorerFilesSplitRatio: state.explorerFilesSplitRatio,

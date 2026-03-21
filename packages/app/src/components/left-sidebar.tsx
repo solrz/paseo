@@ -10,7 +10,7 @@ import {
   type RefObject,
   type SetStateAction,
 } from "react";
-import { View, Pressable, Text, Platform } from "react-native";
+import { View, Pressable, Text, Platform, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useAnimatedStyle,
@@ -26,7 +26,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { router, usePathname } from "expo-router";
-import { usePanelStore } from "@/stores/panel-store";
+import { usePanelStore, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from "@/stores/panel-store";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { useSidebarShortcutModel } from "@/hooks/use-sidebar-shortcut-model";
@@ -48,7 +48,8 @@ import {
 } from "@/utils/host-routes";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 
-const DESKTOP_SIDEBAR_WIDTH = 320;
+const MIN_CHAT_WIDTH = 400;
+
 type SidebarShortcutModel = ReturnType<typeof useSidebarShortcutModel>;
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
 
@@ -631,17 +632,55 @@ function DesktopSidebar({
   const newAgentKeys = useShortcutKeys("new-agent");
   const dragHandlers = useDesktopDragHandlers();
   const trafficLightPadding = useTrafficLightPadding();
+  const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
+  const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
+  const { width: viewportWidth } = useWindowDimensions();
   const hostStatusDotStyle = useMemo(
     () => [styles.hostStatusDot, { backgroundColor: activeHostStatusColor }],
     [activeHostStatusColor],
   );
+
+  const startWidthRef = useRef(sidebarWidth);
+  const resizeWidth = useSharedValue(sidebarWidth);
+
+  useEffect(() => {
+    resizeWidth.value = sidebarWidth;
+  }, [sidebarWidth, resizeWidth]);
+
+  const resizeGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
+        .onStart(() => {
+          startWidthRef.current = sidebarWidth;
+          resizeWidth.value = sidebarWidth;
+        })
+        .onUpdate((event) => {
+          // Dragging right (positive translationX) increases width
+          const newWidth = startWidthRef.current + event.translationX;
+          const maxWidth = Math.max(
+            MIN_SIDEBAR_WIDTH,
+            Math.min(MAX_SIDEBAR_WIDTH, viewportWidth - MIN_CHAT_WIDTH),
+          );
+          const clampedWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(maxWidth, newWidth));
+          resizeWidth.value = clampedWidth;
+        })
+        .onEnd(() => {
+          runOnJS(setSidebarWidth)(resizeWidth.value);
+        }),
+    [sidebarWidth, resizeWidth, setSidebarWidth, viewportWidth],
+  );
+
+  const resizeAnimatedStyle = useAnimatedStyle(() => ({
+    width: resizeWidth.value,
+  }));
 
   if (!isOpen) {
     return null;
   }
 
   return (
-    <View style={[styles.desktopSidebar, { width: DESKTOP_SIDEBAR_WIDTH }]}>
+    <Animated.View style={[styles.desktopSidebar, resizeAnimatedStyle]}>
       {trafficLightPadding.top > 0 ? (
         <View style={{ height: trafficLightPadding.top }} {...dragHandlers} />
       ) : null}
@@ -740,7 +779,14 @@ function DesktopSidebar({
           anchorRef={hostTriggerRef}
         />
       </View>
-    </View>
+
+      {/* Resize handle - absolutely positioned over right border */}
+      <GestureDetector gesture={resizeGesture}>
+        <View
+          style={[styles.resizeHandle, Platform.OS === "web" && ({ cursor: "col-resize" } as any)]}
+        />
+      </GestureDetector>
+    </Animated.View>
   );
 }
 
@@ -766,9 +812,18 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
   },
   desktopSidebar: {
+    position: "relative",
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,
+  },
+  resizeHandle: {
+    position: "absolute",
+    right: -5,
+    top: 0,
+    bottom: 0,
+    width: 10,
+    zIndex: 10,
   },
   sidebarHeader: {
     height: {
