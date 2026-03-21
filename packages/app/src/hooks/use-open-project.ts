@@ -6,7 +6,7 @@ import {
   normalizeWorkspaceDescriptor,
   useSessionStore,
 } from "@/stores/session-store";
-import { buildHostWorkspaceRouteWithOpenIntent } from "@/utils/host-routes";
+import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 
 export function useOpenProject(
   serverId: string | null
@@ -37,11 +37,11 @@ export function useOpenProject(
         ]);
         setHasHydratedWorkspaces(normalizedServerId, true);
         router.replace(
-          buildHostWorkspaceRouteWithOpenIntent(
-            normalizedServerId,
-            payload.workspace.id,
-            { kind: "draft", draftId: "new" }
-          ) as any
+          prepareWorkspaceTab({
+            serverId: normalizedServerId,
+            workspaceId: payload.workspace.id,
+            target: { kind: "draft", draftId: "new" },
+          }) as any
         );
         return true;
       } catch (error) {

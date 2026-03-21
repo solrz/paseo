@@ -144,29 +144,6 @@ export function parseWorkspaceOpenIntent(
   return null;
 }
 
-export function buildWorkspaceOpenIntentParam(
-  intent: WorkspaceOpenIntent
-): string | null {
-  if (intent.kind === "agent") {
-    const agentId = trimNonEmpty(intent.agentId);
-    return agentId ? `agent:${agentId}` : null;
-  }
-  if (intent.kind === "terminal") {
-    const terminalId = trimNonEmpty(intent.terminalId);
-    return terminalId ? `terminal:${terminalId}` : null;
-  }
-  if (intent.kind === "draft") {
-    const draftId = trimNonEmpty(intent.draftId);
-    return draftId ? `draft:${draftId}` : null;
-  }
-  const normalizedPath = trimNonEmpty(intent.path);
-  if (!normalizedPath) {
-    return null;
-  }
-  const encodedPath = encodeFilePathForPathSegment(normalizedPath);
-  return encodedPath ? `file:${encodedPath}` : null;
-}
-
 export function parseHostWorkspaceOpenIntentFromPathname(
   pathname: string
 ): WorkspaceOpenIntent | null {
@@ -311,55 +288,6 @@ export function buildHostWorkspaceRoute(
   return `/h/${encodeSegment(normalizedServerId)}/workspace/${encodeSegment(encodedWorkspaceId)}`;
 }
 
-export function buildHostWorkspaceRouteWithOpenIntent(
-  serverId: string,
-  workspaceId: string,
-  intent: WorkspaceOpenIntent
-): string {
-  const base = buildHostWorkspaceRoute(serverId, workspaceId);
-  if (base === "/") {
-    return "/";
-  }
-  const open = buildWorkspaceOpenIntentParam(intent);
-  if (!open) {
-    return "/";
-  }
-  return `${base}?open=${encodeURIComponent(open)}`;
-}
-
-export function buildHostWorkspaceAgentRoute(
-  serverId: string,
-  workspaceId: string,
-  agentId: string
-): string {
-  return buildHostWorkspaceRouteWithOpenIntent(serverId, workspaceId, {
-    kind: "agent",
-    agentId,
-  });
-}
-
-export function buildHostWorkspaceTerminalRoute(
-  serverId: string,
-  workspaceId: string,
-  terminalId: string
-): string {
-  return buildHostWorkspaceRouteWithOpenIntent(serverId, workspaceId, {
-    kind: "terminal",
-    terminalId,
-  });
-}
-
-export function buildHostWorkspaceFileRoute(
-  serverId: string,
-  workspaceId: string,
-  filePath: string
-): string {
-  return buildHostWorkspaceRouteWithOpenIntent(serverId, workspaceId, {
-    kind: "file",
-    path: filePath,
-  });
-}
-
 export function buildHostAgentDetailRoute(
   serverId: string,
   agentId: string,
@@ -367,11 +295,15 @@ export function buildHostAgentDetailRoute(
 ): string {
   const normalizedWorkspaceId = trimNonEmpty(workspaceId);
   if (normalizedWorkspaceId) {
-    return buildHostWorkspaceAgentRoute(
-      serverId,
-      normalizedWorkspaceId,
-      agentId
-    );
+    const normalizedAgentId = trimNonEmpty(agentId);
+    if (!normalizedAgentId) {
+      return "/";
+    }
+    const base = buildHostWorkspaceRoute(serverId, normalizedWorkspaceId);
+    if (base === "/") {
+      return "/";
+    }
+    return `${base}?open=${encodeURIComponent(`agent:${normalizedAgentId}`)}`;
   }
   const normalizedServerId = trimNonEmpty(serverId);
   const normalizedAgentId = trimNonEmpty(agentId);
@@ -437,18 +369,9 @@ export function mapPathnameToServer(
   }
   const workspaceRoute = parseHostWorkspaceRouteFromPathname(pathname);
   if (workspaceRoute) {
-    const workspacePath = buildHostWorkspaceRoute(
+    return buildHostWorkspaceRoute(
       normalized,
       workspaceRoute.workspaceId
-    );
-    const openIntent = parseHostWorkspaceOpenIntentFromPathname(pathname);
-    if (!openIntent) {
-      return workspacePath;
-    }
-    return buildHostWorkspaceRouteWithOpenIntent(
-      normalized,
-      workspaceRoute.workspaceId,
-      openIntent
     );
   }
   if (suffix.startsWith("agent/")) {

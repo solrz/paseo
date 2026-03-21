@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Agent } from "@/stores/session-store";
 import {
-  canOpenAgentTabFromRoute,
   deriveWorkspaceAgentVisibility,
   shouldPruneWorkspaceAgentTab,
   workspaceAgentVisibilityEqual,
@@ -87,18 +86,6 @@ describe("workspace agent visibility", () => {
     expect(result.knownAgentIds.has("visible-agent")).toBe(true);
     expect(result.knownAgentIds.has("archived-agent")).toBe(true);
     expect(result.knownAgentIds.has("other-workspace-agent")).toBe(false);
-  });
-
-  it("allows explicit route open for archived agent once agents are hydrated", () => {
-    const knownAgentIds = new Set(["archived-agent"]);
-
-    expect(
-      canOpenAgentTabFromRoute({
-        agentId: "archived-agent",
-        agentsHydrated: true,
-        knownAgentIds,
-      })
-    ).toBe(true);
   });
 
   it("does not prune archived agent tabs when knownAgentIds contains the agent", () => {

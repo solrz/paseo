@@ -5,9 +5,9 @@ import { useFormPreferences } from "@/hooks/use-form-preferences";
 import {
   buildHostOpenProjectRoute,
   buildHostRootRoute,
-  buildHostWorkspaceAgentRoute,
   buildHostWorkspaceRoute,
 } from "@/utils/host-routes";
+import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 
 const HOST_ROOT_REDIRECT_DELAY_MS = 300;
 
@@ -59,11 +59,11 @@ export default function HostIndexRoute() {
       const primaryAgent = visibleAgents[0];
       if (primaryAgent?.cwd?.trim()) {
         router.replace(
-          buildHostWorkspaceAgentRoute(
+          prepareWorkspaceTab({
             serverId,
-            primaryAgent.cwd.trim(),
-            primaryAgent.id
-          ) as any
+            workspaceId: primaryAgent.cwd.trim(),
+            target: { kind: "agent", agentId: primaryAgent.id },
+          }) as any
         );
         return;
       }

@@ -4,8 +4,8 @@ import { useSessionStore } from "@/stores/session-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import {
   buildHostRootRoute,
-  buildHostWorkspaceAgentRoute,
 } from "@/utils/host-routes";
+import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 
 export default function HostAgentReadyRoute() {
   const router = useRouter();
@@ -39,7 +39,11 @@ export default function HostAgentReadyRoute() {
     if (normalizedCwd) {
       redirectedRef.current = true;
       router.replace(
-        buildHostWorkspaceAgentRoute(serverId, normalizedCwd, agentId) as any
+        prepareWorkspaceTab({
+          serverId,
+          workspaceId: normalizedCwd,
+          target: { kind: "agent", agentId },
+        }) as any
       );
     }
   }, [agentCwd, agentId, router, serverId]);
@@ -78,7 +82,13 @@ export default function HostAgentReadyRoute() {
         const cwd = result?.agent?.cwd?.trim();
         redirectedRef.current = true;
         if (cwd) {
-          router.replace(buildHostWorkspaceAgentRoute(serverId, cwd, agentId) as any);
+          router.replace(
+            prepareWorkspaceTab({
+              serverId,
+              workspaceId: cwd,
+              target: { kind: "agent", agentId },
+            }) as any
+          );
           return;
         }
         router.replace(buildHostRootRoute(serverId) as any);

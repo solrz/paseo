@@ -12,11 +12,11 @@ import {
   takeCommandCenterFocusRestoreElement,
 } from "@/utils/command-center-focus-restore";
 import {
-  buildHostWorkspaceAgentRoute,
   buildHostSettingsRoute,
   parseServerIdFromPathname,
 } from "@/utils/host-routes";
 import type { ShortcutKey } from "@/utils/format-shortcut";
+import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { focusWithRetries } from "@/utils/web-focus";
 
 const EMPTY_AGENTS: AggregatedAgent[] = [];
@@ -199,12 +199,12 @@ export function useCommandCenter() {
       // Don't restore focus back to the prior element after we navigate.
       clearCommandCenterFocusRestoreElement();
       setOpen(false);
-      const route: Href = buildHostWorkspaceAgentRoute(
-        agent.serverId,
-        agent.cwd,
-        agent.id
-      ) as Href;
-      router.navigate(route);
+      const route = prepareWorkspaceTab({
+        serverId: agent.serverId,
+        workspaceId: agent.cwd,
+        target: { kind: "agent", agentId: agent.id },
+      });
+      router.navigate(route as any);
     },
     [setOpen]
   );

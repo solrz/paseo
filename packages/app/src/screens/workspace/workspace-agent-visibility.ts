@@ -57,20 +57,6 @@ function setsEqual(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
-export function canOpenAgentTabFromRoute(input: {
-  agentId: string;
-  agentsHydrated: boolean;
-  knownAgentIds: Set<string>;
-}): boolean {
-  if (!input.agentId.trim()) {
-    return false;
-  }
-  if (!input.agentsHydrated) {
-    return true;
-  }
-  return input.knownAgentIds.has(input.agentId);
-}
-
 export function shouldPruneWorkspaceAgentTab(input: {
   agentId: string;
   agentsHydrated: boolean;

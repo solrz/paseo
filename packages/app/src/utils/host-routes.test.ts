@@ -2,11 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildHostAgentDetailRoute,
   buildHostRootRoute,
-  buildHostWorkspaceAgentRoute,
-  buildHostWorkspaceFileRoute,
   buildHostWorkspaceRoute,
-  buildHostWorkspaceRouteWithOpenIntent,
-  buildHostWorkspaceTerminalRoute,
   decodeFilePathFromPathSegment,
   decodeWorkspaceIdFromPathSegment,
   encodeFilePathForPathSegment,
@@ -65,24 +61,6 @@ describe("workspace route parsing", () => {
     expect(buildHostRootRoute("local")).toBe("/h/local");
   });
 
-  it("builds workspace routes with open intent query", () => {
-    expect(buildHostWorkspaceAgentRoute("local", "/tmp/repo", "agent-1")).toBe(
-      "/h/local/workspace/L3RtcC9yZXBv?open=agent%3Aagent-1"
-    );
-    expect(buildHostWorkspaceTerminalRoute("local", "/tmp/repo", "term-1")).toBe(
-      "/h/local/workspace/L3RtcC9yZXBv?open=terminal%3Aterm-1"
-    );
-    expect(buildHostWorkspaceFileRoute("local", "/tmp/repo", "src/index.ts")).toBe(
-      "/h/local/workspace/L3RtcC9yZXBv?open=file%3Ac3JjL2luZGV4LnRz"
-    );
-    expect(
-      buildHostWorkspaceRouteWithOpenIntent("local", "/tmp/repo", {
-        kind: "draft",
-        draftId: "new",
-      })
-    ).toBe("/h/local/workspace/L3RtcC9yZXBv?open=draft%3Anew");
-  });
-
   it("parses workspace open intent from pathname query", () => {
     expect(
       parseHostWorkspaceOpenIntentFromPathname(
@@ -106,7 +84,7 @@ describe("workspace route parsing", () => {
     });
   });
 
-  it("keeps agent detail workspace routing on workspace path with open intent", () => {
+  it("uses the plain workspace route when workspace context is provided", () => {
     expect(buildHostAgentDetailRoute("local", "agent-1", "/tmp/repo")).toBe(
       "/h/local/workspace/L3RtcC9yZXBv?open=agent%3Aagent-1"
     );

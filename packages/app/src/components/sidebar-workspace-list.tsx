@@ -33,9 +33,9 @@ import { getHostRuntimeStore, isHostRuntimeConnected } from '@/runtime/host-runt
 import { getIsDesktop } from '@/constants/layout'
 import { projectIconQueryKey } from '@/hooks/use-project-icon-query'
 import {
-  buildHostWorkspaceRouteWithOpenIntent,
   parseHostWorkspaceRouteFromPathname,
 } from '@/utils/host-routes'
+import { prepareWorkspaceTab } from '@/utils/workspace-navigation'
 import {
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
@@ -1649,10 +1649,11 @@ export function SidebarWorkspaceList({
           }, 3000)
         )
         onWorkspacePress?.()
-        router.replace(
-          buildHostWorkspaceRouteWithOpenIntent(serverId, workspace.id, {
-            kind: 'draft',
-            draftId: 'new',
+        router.navigate(
+          prepareWorkspaceTab({
+            serverId,
+            workspaceId: workspace.id,
+            target: { kind: 'draft', draftId: 'new' },
           }) as any
         )
       } catch (error) {
