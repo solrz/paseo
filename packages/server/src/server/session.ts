@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { watch, type FSWatcher } from 'node:fs'
-import { stat } from 'fs/promises'
+import { readFile, stat } from 'fs/promises'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { join, resolve, sep } from 'path'
@@ -101,6 +101,7 @@ import { AgentStorage, type StoredAgentRecord } from './agent/agent-storage.js'
 import { isValidAgentProvider, AGENT_PROVIDER_IDS } from './agent/provider-manifest.js'
 import {
   buildProjectPlacementForCwd,
+  detectStaleWorkspaces,
   deriveProjectKind,
   deriveProjectRootPath,
   deriveWorkspaceDisplayName,
@@ -184,6 +185,8 @@ const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>()
 const DEFAULT_AGENT_PROVIDER = AGENT_PROVIDER_IDS[0]
 const CHECKOUT_DIFF_WATCH_DEBOUNCE_MS = 150
 const CHECKOUT_DIFF_FALLBACK_REFRESH_MS = 5_000
+const WORKSPACE_GIT_WATCH_DEBOUNCE_MS = 500
+const WORKSPACE_GIT_WATCH_REMOVED_FINGERPRINT = '__removed__'
 const TERMINAL_STREAM_WINDOW_BYTES = 256 * 1024
 const TERMINAL_STREAM_MAX_PENDING_BYTES = 2 * 1024 * 1024
 const TERMINAL_STREAM_MAX_PENDING_CHUNKS = 2048
@@ -242,6 +245,15 @@ type CheckoutDiffWatchTarget = {
   refreshPromise: Promise<void> | null
   refreshQueued: boolean
   latestPayload: CheckoutDiffSnapshotPayload | null
+  latestFingerprint: string | null
+}
+
+type WorkspaceGitWatchTarget = {
+  cwd: string
+  watchers: FSWatcher[]
+  debounceTimer: NodeJS.Timeout | null
+  refreshPromise: Promise<void> | null
+  refreshQueued: boolean
   latestFingerprint: string | null
 }
 
@@ -600,6 +612,7 @@ export class Session {
   private nextTerminalStreamId = 1
   private readonly checkoutDiffSubscriptions = new Map<string, { targetKey: string }>()
   private readonly checkoutDiffTargets = new Map<string, CheckoutDiffWatchTarget>()
+  private readonly workspaceGitWatchTargets = new Map<string, WorkspaceGitWatchTarget>()
   private readonly voiceAgentMcpStdio: VoiceMcpStdioConfig | null
   private readonly localSpeechModelsDir: string
   private readonly defaultLocalSpeechModelIds: LocalSpeechModelId[]
@@ -1308,6 +1321,9 @@ export class Session {
     const normalizedWorkspaceId = normalizePersistedWorkspaceId(workspaceId)
     const existing = await this.workspaceRegistry.get(normalizedWorkspaceId)
     const placement = await this.buildProjectPlacement(normalizedWorkspaceId)
+    await this.syncWorkspaceGitWatchTarget(normalizedWorkspaceId, {
+      isGit: placement.checkout.isGit,
+    })
     const now = new Date().toISOString()
     const nextProjectCreatedAt = existing?.createdAt ?? now
     const nextWorkspaceCreatedAt = existing?.createdAt ?? now
@@ -1366,8 +1382,32 @@ export class Session {
   private async reconcileActiveWorkspaceRecords(): Promise<Set<string>> {
     const changedWorkspaceIds = new Set<string>()
     const activeWorkspaces = (await this.workspaceRegistry.list()).filter((workspace) => !workspace.archivedAt)
+    const staleWorkspaceIds = await detectStaleWorkspaces({
+      activeWorkspaces,
+      agentRecords: (await this.agentStorage.list()).map((agent) => ({
+        cwd: agent.cwd,
+        archivedAt: agent.archivedAt ?? null,
+      })),
+      checkDirectoryExists: async (cwd) => {
+        try {
+          await stat(cwd)
+          return true
+        } catch {
+          return false
+        }
+      },
+    })
+
+    for (const workspaceId of staleWorkspaceIds) {
+      await this.archiveWorkspaceRecord(workspaceId)
+      changedWorkspaceIds.add(workspaceId)
+    }
 
     for (const workspace of activeWorkspaces) {
+      if (staleWorkspaceIds.has(workspace.workspaceId)) {
+        continue
+      }
+
       const result = await this.reconcileWorkspaceRecord(workspace.workspaceId)
       if (result.changed) {
         changedWorkspaceIds.add(result.workspace.workspaceId)
@@ -3987,6 +4027,174 @@ export class Session {
     }
   }
 
+  private async resolveWorkspaceGitRefsRoot(gitDir: string): Promise<string> {
+    try {
+      const commonDir = (await readFile(join(gitDir, 'commondir'), 'utf8')).trim()
+      if (commonDir.length > 0) {
+        return resolve(gitDir, commonDir)
+      }
+    } catch {
+      // Regular repos do not have a commondir file.
+    }
+    return gitDir
+  }
+
+  private closeWorkspaceGitWatchTarget(target: WorkspaceGitWatchTarget): void {
+    if (target.debounceTimer) {
+      clearTimeout(target.debounceTimer)
+      target.debounceTimer = null
+    }
+    for (const watcher of target.watchers) {
+      watcher.close()
+    }
+    target.watchers = []
+  }
+
+  private removeWorkspaceGitWatchTarget(cwd: string): void {
+    const workspaceId = normalizePersistedWorkspaceId(cwd)
+    const target = this.workspaceGitWatchTargets.get(workspaceId)
+    if (!target) {
+      return
+    }
+    this.closeWorkspaceGitWatchTarget(target)
+    this.workspaceGitWatchTargets.delete(workspaceId)
+  }
+
+  private workspaceGitDescriptorFingerprint(workspace: WorkspaceDescriptorPayload | null): string {
+    if (!workspace) {
+      return WORKSPACE_GIT_WATCH_REMOVED_FINGERPRINT
+    }
+    return JSON.stringify([
+      workspace.name,
+      workspace.diffStat ? [workspace.diffStat.additions, workspace.diffStat.deletions] : null,
+    ])
+  }
+
+  private shouldSkipWorkspaceGitWatchUpdate(
+    workspaceId: string,
+    workspace: WorkspaceDescriptorPayload | null
+  ): boolean {
+    const target = this.workspaceGitWatchTargets.get(workspaceId)
+    if (!target) {
+      return false
+    }
+    const nextFingerprint = this.workspaceGitDescriptorFingerprint(workspace)
+    if (target.latestFingerprint === nextFingerprint) {
+      return true
+    }
+    target.latestFingerprint = nextFingerprint
+    return false
+  }
+
+  private rememberWorkspaceGitWatchFingerprint(
+    workspaceId: string,
+    workspace: WorkspaceDescriptorPayload | null
+  ): void {
+    const target = this.workspaceGitWatchTargets.get(workspaceId)
+    if (!target) {
+      return
+    }
+    target.latestFingerprint = this.workspaceGitDescriptorFingerprint(workspace)
+  }
+
+  private primeWorkspaceGitWatchFingerprints(workspaces: Iterable<WorkspaceDescriptorPayload>): void {
+    for (const workspace of workspaces) {
+      this.rememberWorkspaceGitWatchFingerprint(workspace.id, workspace)
+    }
+  }
+
+  private scheduleWorkspaceGitWatchRefresh(target: WorkspaceGitWatchTarget): void {
+    if (target.debounceTimer) {
+      clearTimeout(target.debounceTimer)
+    }
+    target.debounceTimer = setTimeout(() => {
+      target.debounceTimer = null
+      void this.refreshWorkspaceGitWatchTarget(target)
+    }, WORKSPACE_GIT_WATCH_DEBOUNCE_MS)
+  }
+
+  private async refreshWorkspaceGitWatchTarget(target: WorkspaceGitWatchTarget): Promise<void> {
+    if (target.refreshPromise) {
+      target.refreshQueued = true
+      return
+    }
+
+    target.refreshPromise = (async () => {
+      do {
+        target.refreshQueued = false
+        await this.emitWorkspaceUpdateForCwd(target.cwd, {
+          dedupeGitState: true,
+        })
+      } while (target.refreshQueued)
+    })()
+
+    try {
+      await target.refreshPromise
+    } finally {
+      target.refreshPromise = null
+    }
+  }
+
+  private async ensureWorkspaceGitWatchTarget(cwd: string): Promise<void> {
+    const workspaceId = normalizePersistedWorkspaceId(cwd)
+    if (this.workspaceGitWatchTargets.has(workspaceId)) {
+      return
+    }
+
+    const gitDir = await this.resolveCheckoutGitDir(cwd)
+    if (!gitDir) {
+      return
+    }
+
+    const refsRoot = await this.resolveWorkspaceGitRefsRoot(gitDir)
+    const target: WorkspaceGitWatchTarget = {
+      cwd: workspaceId,
+      watchers: [],
+      debounceTimer: null,
+      refreshPromise: null,
+      refreshQueued: false,
+      latestFingerprint: null,
+    }
+
+    for (const watchPath of new Set([join(gitDir, 'HEAD'), join(refsRoot, 'refs', 'heads')])) {
+      let watcher: FSWatcher | null = null
+      try {
+        watcher = watch(watchPath, { recursive: false }, () => {
+          this.scheduleWorkspaceGitWatchRefresh(target)
+        })
+      } catch (error) {
+        this.sessionLogger.warn({ err: error, cwd, watchPath }, 'Failed to start workspace git watcher')
+      }
+
+      if (!watcher) {
+        continue
+      }
+
+      watcher.on('error', (error) => {
+        this.sessionLogger.warn({ err: error, cwd, watchPath }, 'Workspace git watcher error')
+      })
+      target.watchers.push(watcher)
+    }
+
+    if (target.watchers.length === 0) {
+      return
+    }
+
+    this.workspaceGitWatchTargets.set(workspaceId, target)
+  }
+
+  private async syncWorkspaceGitWatchTarget(
+    cwd: string,
+    options: { isGit: boolean }
+  ): Promise<void> {
+    if (!options.isGit) {
+      this.removeWorkspaceGitWatchTarget(cwd)
+      return
+    }
+
+    await this.ensureWorkspaceGitWatchTarget(cwd)
+  }
+
   private async resolveCheckoutWatchRoot(cwd: string): Promise<string | null> {
     try {
       const { stdout } = await execAsync('git rev-parse --path-format=absolute --show-toplevel', {
@@ -5731,6 +5939,9 @@ export class Session {
 
     await this.projectRegistry.upsert(nextProjectRecord)
     await this.workspaceRegistry.upsert(nextWorkspaceRecord)
+    await this.syncWorkspaceGitWatchTarget(workspaceId, {
+      isGit: placement.checkout.isGit,
+    })
 
     if (
       existingWorkspace &&
@@ -5746,11 +5957,13 @@ export class Session {
   private async archiveWorkspaceRecord(workspaceId: string, archivedAt?: string): Promise<void> {
     const existing = await this.workspaceRegistry.get(workspaceId)
     if (!existing || existing.archivedAt) {
+      this.removeWorkspaceGitWatchTarget(workspaceId)
       return
     }
 
     const nextArchivedAt = archivedAt ?? new Date().toISOString()
     await this.workspaceRegistry.archive(workspaceId, nextArchivedAt)
+    this.removeWorkspaceGitWatchTarget(workspaceId)
 
     const siblingWorkspaces = (await this.workspaceRegistry.list()).filter(
       (workspace) => workspace.projectId === existing.projectId && !workspace.archivedAt
@@ -5760,7 +5973,10 @@ export class Session {
     }
   }
 
-  private async emitWorkspaceUpdateForCwd(cwd: string): Promise<void> {
+  private async emitWorkspaceUpdateForCwd(
+    cwd: string,
+    options?: { dedupeGitState?: boolean }
+  ): Promise<void> {
     const subscription = this.workspaceUpdatesSubscription
     if (!subscription) {
       return
@@ -5774,7 +5990,19 @@ export class Session {
 
     for (const nextWorkspaceId of workspaceIdsToEmit) {
       const workspace = descriptorsByWorkspaceId.get(nextWorkspaceId)
-      if (!workspace || !this.matchesWorkspaceFilter({ workspace, filter: subscription.filter })) {
+      const nextWorkspace =
+        workspace && this.matchesWorkspaceFilter({ workspace, filter: subscription.filter })
+          ? workspace
+          : null
+      if (
+        options?.dedupeGitState &&
+        this.shouldSkipWorkspaceGitWatchUpdate(nextWorkspaceId, nextWorkspace)
+      ) {
+        continue
+      }
+      this.rememberWorkspaceGitWatchFingerprint(nextWorkspaceId, nextWorkspace)
+
+      if (!nextWorkspace) {
         this.bufferOrEmitWorkspaceUpdate(subscription, {
           kind: 'remove',
           id: nextWorkspaceId,
@@ -5784,7 +6012,7 @@ export class Session {
 
       this.bufferOrEmitWorkspaceUpdate(subscription, {
         kind: 'upsert',
-        workspace,
+        workspace: nextWorkspace,
       })
     }
   }
@@ -5810,7 +6038,13 @@ export class Session {
 
     for (const workspaceId of uniqueWorkspaceCwds) {
       const workspace = descriptorsByWorkspaceId.get(workspaceId)
-      if (!workspace || !this.matchesWorkspaceFilter({ workspace, filter: subscription.filter })) {
+      const nextWorkspace =
+        workspace && this.matchesWorkspaceFilter({ workspace, filter: subscription.filter })
+          ? workspace
+          : null
+      this.rememberWorkspaceGitWatchFingerprint(workspaceId, nextWorkspace)
+
+      if (!nextWorkspace) {
         this.bufferOrEmitWorkspaceUpdate(subscription, {
           kind: 'remove',
           id: workspaceId,
@@ -5820,7 +6054,7 @@ export class Session {
 
       this.bufferOrEmitWorkspaceUpdate(subscription, {
         kind: 'upsert',
-        workspace,
+        workspace: nextWorkspace,
       })
     }
   }
@@ -5906,6 +6140,7 @@ export class Session {
       }
 
       const payload = await this.listFetchWorkspacesEntries(request)
+      this.primeWorkspaceGitWatchFingerprints(payload.entries)
       const snapshotLatestActivityByWorkspaceId = new Map<string, number>()
       for (const entry of payload.entries) {
         const parsedLatestActivity = entry.activityAt
@@ -7242,6 +7477,11 @@ export class Session {
     }
     this.checkoutDiffTargets.clear()
     this.checkoutDiffSubscriptions.clear()
+
+    for (const target of this.workspaceGitWatchTargets.values()) {
+      this.closeWorkspaceGitWatchTarget(target)
+    }
+    this.workspaceGitWatchTargets.clear()
   }
 
   // ============================================================================

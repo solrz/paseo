@@ -68,7 +68,7 @@ function createSessionForWorkspaceTests(): Session {
     error: vi.fn(),
   }
 
-  return new Session({
+  const session = new Session({
     clientId: 'test-client',
     onMessage: vi.fn(),
     logger: logger as any,
@@ -108,7 +108,8 @@ function createSessionForWorkspaceTests(): Session {
     stt: null,
     tts: null,
     terminalManager: null,
-  })
+  }) as any
+  return session
 }
 
 describe('workspace aggregation', () => {
@@ -528,10 +529,13 @@ describe('workspace aggregation', () => {
     const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>()
     const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>()
 
-    const mainWorkspaceId = '/tmp/inkwell'
-    const worktreeWorkspaceId = '/tmp/inkwell/.paseo/worktrees/feature-a'
+    const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), 'session-workspace-reconcile-')))
+    const mainWorkspaceId = path.join(tempDir, 'inkwell')
+    const worktreeWorkspaceId = path.join(mainWorkspaceId, '.paseo', 'worktrees', 'feature-a')
     const localProjectId = mainWorkspaceId
     const remoteProjectId = 'remote:github.com/zimakki/inkwell'
+
+    execSync(`mkdir -p ${JSON.stringify(worktreeWorkspaceId)}`)
 
     projects.set(
       localProjectId,
@@ -595,25 +599,29 @@ describe('workspace aggregation', () => {
       },
     })
 
-    await session.handleMessage({
-      type: 'open_project_request',
-      cwd: worktreeWorkspaceId,
-      requestId: 'req-open-worktree',
-    })
+    try {
+      await session.handleMessage({
+        type: 'open_project_request',
+        cwd: worktreeWorkspaceId,
+        requestId: 'req-open-worktree',
+      })
 
-    expect(workspaces.get(mainWorkspaceId)?.projectId).toBe(remoteProjectId)
-    expect(workspaces.get(worktreeWorkspaceId)?.projectId).toBe(remoteProjectId)
-    expect(projects.get(localProjectId)?.archivedAt).toBeTruthy()
+      expect(workspaces.get(mainWorkspaceId)?.projectId).toBe(remoteProjectId)
+      expect(workspaces.get(worktreeWorkspaceId)?.projectId).toBe(remoteProjectId)
+      expect(projects.get(localProjectId)?.archivedAt).toBeTruthy()
 
-    const workspaceUpdates = emitted.filter((message) => message.type === 'workspace_update') as any[]
-    expect(workspaceUpdates).toHaveLength(2)
-    expect(workspaceUpdates.map((message) => message.payload.workspace.id).sort()).toEqual([
-      mainWorkspaceId,
-      worktreeWorkspaceId,
-    ])
-    expect(
-      workspaceUpdates.every((message) => message.payload.workspace.projectId === remoteProjectId)
-    ).toBe(true)
+      const workspaceUpdates = emitted.filter((message) => message.type === 'workspace_update') as any[]
+      expect(workspaceUpdates).toHaveLength(2)
+      expect(workspaceUpdates.map((message) => message.payload.workspace.id).sort()).toEqual([
+        mainWorkspaceId,
+        worktreeWorkspaceId,
+      ])
+      expect(
+        workspaceUpdates.every((message) => message.payload.workspace.projectId === remoteProjectId)
+      ).toBe(true)
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 
   test('fetch_workspaces_request reconciles remote URL changes for existing workspaces', async () => {
@@ -621,10 +629,13 @@ describe('workspace aggregation', () => {
     const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>()
     const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>()
 
-    const mainWorkspaceId = '/tmp/inkwell'
-    const worktreeWorkspaceId = '/tmp/inkwell/.paseo/worktrees/feature-a'
+    const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), 'session-workspace-fetch-')))
+    const mainWorkspaceId = path.join(tempDir, 'inkwell')
+    const worktreeWorkspaceId = path.join(mainWorkspaceId, '.paseo', 'worktrees', 'feature-a')
     const oldProjectId = 'remote:github.com/old-owner/inkwell'
     const newProjectId = 'remote:github.com/new-owner/inkwell'
+
+    execSync(`mkdir -p ${JSON.stringify(worktreeWorkspaceId)}`)
 
     projects.set(
       oldProjectId,
@@ -687,14 +698,18 @@ describe('workspace aggregation', () => {
       },
     })
 
-    const result = await session.listFetchWorkspacesEntries({
-      type: 'fetch_workspaces_request',
-      requestId: 'req-fetch-reconcile',
-    })
+    try {
+      const result = await session.listFetchWorkspacesEntries({
+        type: 'fetch_workspaces_request',
+        requestId: 'req-fetch-reconcile',
+      })
 
-    expect(result.entries.map((entry: any) => entry.projectId)).toEqual([newProjectId, newProjectId])
-    expect(workspaces.get(mainWorkspaceId)?.projectId).toBe(newProjectId)
-    expect(workspaces.get(worktreeWorkspaceId)?.projectId).toBe(newProjectId)
-    expect(projects.get(oldProjectId)?.archivedAt).toBeTruthy()
+      expect(result.entries.map((entry: any) => entry.projectId)).toEqual([newProjectId, newProjectId])
+      expect(workspaces.get(mainWorkspaceId)?.projectId).toBe(newProjectId)
+      expect(workspaces.get(worktreeWorkspaceId)?.projectId).toBe(newProjectId)
+      expect(projects.get(oldProjectId)?.archivedAt).toBeTruthy()
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 })

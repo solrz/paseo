@@ -2,9 +2,20 @@ import { resolve } from 'node:path'
 
 import { getCheckoutStatusLite } from '../utils/checkout-git.js'
 import type { ProjectCheckoutLitePayload, ProjectPlacementPayload } from '../shared/messages.js'
+import type { PersistedWorkspaceRecord } from './workspace-registry.js'
 
 export type PersistedProjectKind = 'git' | 'non_git'
 export type PersistedWorkspaceKind = 'local_checkout' | 'worktree' | 'directory'
+export type StaleWorkspaceAgentRecord = {
+  cwd: string
+  archivedAt: string | null
+}
+
+export type DetectStaleWorkspacesInput = {
+  activeWorkspaces: PersistedWorkspaceRecord[]
+  agentRecords: StaleWorkspaceAgentRecord[]
+  checkDirectoryExists: (cwd: string) => Promise<boolean>
+}
 
 export function normalizeWorkspaceId(cwd: string): string {
   const trimmed = cwd.trim()
@@ -126,6 +137,38 @@ export function deriveWorkspaceKind(checkout: ProjectCheckoutLitePayload): Persi
     return 'directory'
   }
   return checkout.isPaseoOwnedWorktree ? 'worktree' : 'local_checkout'
+}
+
+export async function detectStaleWorkspaces(
+  input: DetectStaleWorkspacesInput
+): Promise<Set<string>> {
+  const staleWorkspaceIds = new Set<string>()
+  const cwdsWithActiveAgents = new Set<string>()
+  const cwdsWithAnyAgent = new Set<string>()
+
+  for (const agent of input.agentRecords) {
+    const normalizedCwd = normalizeWorkspaceId(agent.cwd)
+    cwdsWithAnyAgent.add(normalizedCwd)
+    if (!agent.archivedAt) {
+      cwdsWithActiveAgents.add(normalizedCwd)
+    }
+  }
+
+  for (const workspace of input.activeWorkspaces) {
+    const dirExists = await input.checkDirectoryExists(workspace.cwd)
+    if (!dirExists) {
+      staleWorkspaceIds.add(workspace.workspaceId)
+      continue
+    }
+
+    const hasAgents = cwdsWithAnyAgent.has(workspace.workspaceId)
+    const hasActiveAgents = cwdsWithActiveAgents.has(workspace.workspaceId)
+    if (hasAgents && !hasActiveAgents) {
+      staleWorkspaceIds.add(workspace.workspaceId)
+    }
+  }
+
+  return staleWorkspaceIds
 }
 
 export async function buildProjectPlacementForCwd(input: {
