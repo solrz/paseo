@@ -67,8 +67,8 @@ import {
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
-import { buildHostWorkspaceFileRoute } from "@/utils/host-routes";
 import { normalizeInlinePathTarget } from "@/utils/inline-path";
+import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import {
   getWorkingIndicatorDotStrength,
   WORKING_INDICATOR_CYCLE_MS,
@@ -171,12 +171,12 @@ export const AgentStreamView = forwardRef<AgentStreamViewHandle, AgentStreamView
           return;
         }
 
-        const route = buildHostWorkspaceFileRoute(
-          resolvedServerId,
+        const route = prepareWorkspaceTab({
+          serverId: resolvedServerId,
           workspaceId,
-          normalized.file
-        );
-        router.replace(route as any);
+          target: { kind: "file", path: normalized.file },
+        });
+        router.navigate(route as any);
         return;
       }
 

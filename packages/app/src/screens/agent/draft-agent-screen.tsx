@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { createNameId } from 'mnemonic-id'
 import type { ImageAttachment } from '@/components/message-input'
 import { View, Text, Pressable, ScrollView, Keyboard, Platform } from 'react-native'
-import { useLocalSearchParams, useRouter, type Href } from 'expo-router'
+import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useIsFocused } from '@react-navigation/native'
 import { StyleSheet, UnistylesRuntime, useUnistyles } from 'react-native-unistyles'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -46,7 +46,7 @@ import type {
   AgentSessionConfig,
 } from '@server/server/agent/agent-sdk-types'
 import { AGENT_PROVIDER_DEFINITIONS } from '@server/server/agent/provider-manifest'
-import { buildHostWorkspaceAgentRoute } from '@/utils/host-routes'
+import { prepareWorkspaceTab } from '@/utils/workspace-navigation'
 import { useDesktopDragHandlers } from '@/utils/desktop-window'
 import { useKeyboardShiftStyle } from '@/hooks/use-keyboard-shift-style'
 import { normalizeAgentSnapshot } from '@/utils/agent-snapshots'
@@ -928,12 +928,12 @@ function DraftAgentScreenContent({
       }
     },
     onCreateSuccess: ({ result }) => {
-      const route: Href = buildHostWorkspaceAgentRoute(
-        selectedServerId as string,
-        result.cwd,
-        result.id
-      ) as Href
-      router.replace(route)
+      const route = prepareWorkspaceTab({
+        serverId: selectedServerId as string,
+        workspaceId: result.cwd,
+        target: { kind: 'agent', agentId: result.id },
+      })
+      router.replace(route as any)
     },
   })
   useEffect(() => {

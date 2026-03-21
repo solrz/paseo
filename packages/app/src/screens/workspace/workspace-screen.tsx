@@ -64,8 +64,6 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import {
-  buildWorkspaceOpenIntentParam,
-  type WorkspaceOpenIntent,
   decodeWorkspaceIdFromPathSegment,
 } from "@/utils/host-routes";
 import { normalizeWorkspaceIdentity } from "@/utils/workspace-identity";
@@ -103,7 +101,6 @@ import {
 } from "@/screens/workspace/workspace-agent-visibility";
 import {
   deriveWorkspacePaneState,
-  type WorkspaceDerivedTab,
 } from "@/screens/workspace/workspace-pane-state";
 import {
   buildWorkspacePaneContentModel,
@@ -126,8 +123,6 @@ const EMPTY_SET = new Set<string>();
 type WorkspaceScreenProps = {
   serverId: string;
   workspaceId: string;
-  openIntent?: WorkspaceOpenIntent | null;
-  onOpenIntentConsumed?: () => void;
 };
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -144,49 +139,6 @@ function decodeSegment(value: string): string {
   } catch {
     return value;
   }
-}
-
-function buildOpenIntentKey(input: {
-  serverId: string;
-  workspaceId: string;
-  openIntent?: WorkspaceOpenIntent | null;
-}): string | null {
-  if (!input.openIntent) {
-    return null;
-  }
-  const openParam = buildWorkspaceOpenIntentParam(input.openIntent);
-  if (!openParam) {
-    return null;
-  }
-  return `${input.serverId}:${input.workspaceId}:${openParam}`;
-}
-
-function openIntentMatchesActiveTab(input: {
-  openIntent?: WorkspaceOpenIntent | null;
-  activeTab: WorkspaceDerivedTab | null;
-}): boolean {
-  const { openIntent, activeTab } = input;
-  if (!openIntent || !activeTab) {
-    return false;
-  }
-
-  const target = activeTab.descriptor.target;
-  if (openIntent.kind !== target.kind) {
-    return false;
-  }
-  if (openIntent.kind === "agent" && target.kind === "agent") {
-    return target.agentId === openIntent.agentId;
-  }
-  if (openIntent.kind === "terminal" && target.kind === "terminal") {
-    return target.terminalId === openIntent.terminalId;
-  }
-  if (openIntent.kind === "file" && target.kind === "file") {
-    return target.path === openIntent.path;
-  }
-  if (openIntent.kind === "draft" && target.kind === "draft") {
-    return openIntent.draftId === "new" || target.draftId === openIntent.draftId;
-  }
-  return false;
 }
 
 function getFallbackTabOptionLabel(tab: WorkspaceTabDescriptor): string {
@@ -509,8 +461,6 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
 export function WorkspaceScreen({
   serverId,
   workspaceId,
-  openIntent,
-  onOpenIntentConsumed,
 }: WorkspaceScreenProps) {
   const isFocused = useIsFocused();
 
@@ -523,8 +473,6 @@ export function WorkspaceScreen({
       <WorkspaceScreenContent
         serverId={serverId}
         workspaceId={workspaceId}
-        openIntent={openIntent}
-        onOpenIntentConsumed={onOpenIntentConsumed}
       />
     </ExplorerSidebarAnimationProvider>
   );
@@ -563,8 +511,6 @@ function useCloseTabs(): UseCloseTabsResult {
 function WorkspaceScreenContent({
   serverId,
   workspaceId,
-  openIntent,
-  onOpenIntentConsumed,
 }: WorkspaceScreenProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -846,7 +792,6 @@ function WorkspaceScreenContent({
   const openWorkspaceTab = useWorkspaceLayoutStore((state) => state.openTab);
   const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
   const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
-  const pinWorkspaceAgent = useWorkspaceLayoutStore((state) => state.pinAgent);
   const unpinWorkspaceAgent = useWorkspaceLayoutStore((state) => state.unpinAgent);
   const retargetWorkspaceTab = useWorkspaceLayoutStore((state) => state.retargetTab);
   const splitWorkspacePane = useWorkspaceLayoutStore((state) => state.splitPane);
@@ -861,33 +806,7 @@ function WorkspaceScreenContent({
       : EMPTY_PINNED_AGENT_IDS
   );
   const pendingByDraftId = useCreateFlowStore((state) => state.pendingByDraftId);
-  const consumedOpenIntentsRef = useRef(new Set<string>());
   const { closingTabIds, closeTab } = useCloseTabs();
-  const [resolvedOpenIntentKey, setResolvedOpenIntentKey] = useState<string | null>(null);
-  const currentOpenIntentKey = useMemo(
-    () =>
-      buildOpenIntentKey({
-        serverId: normalizedServerId,
-        workspaceId: normalizedWorkspaceId,
-        openIntent,
-      }),
-    [normalizedServerId, normalizedWorkspaceId, openIntent]
-  );
-  const currentOpenIntentPinnedAgentId = useMemo(
-    function getCurrentOpenIntentPinnedAgentId() {
-      if (!openIntent || openIntent.kind !== "agent" || !hasHydratedAgents) {
-        return null;
-      }
-      if (!workspaceAgentVisibility.knownAgentIds.has(openIntent.agentId)) {
-        return null;
-      }
-      if (workspaceAgentVisibility.activeAgentIds.has(openIntent.agentId)) {
-        return null;
-      }
-      return openIntent.agentId;
-    },
-    [hasHydratedAgents, openIntent, workspaceAgentVisibility]
-  );
   const closeWorkspaceTabWithCleanup = useCallback(
     function closeWorkspaceTabWithCleanup(input: {
       tabId: string;
@@ -985,96 +904,6 @@ function WorkspaceScreenContent({
   );
 
   useEffect(() => {
-    if (!currentOpenIntentKey) {
-      if (resolvedOpenIntentKey !== null) {
-        setResolvedOpenIntentKey(null);
-      }
-      return;
-    }
-
-    if (resolvedOpenIntentKey === currentOpenIntentKey) {
-      return;
-    }
-  }, [currentOpenIntentKey, resolvedOpenIntentKey]);
-
-  useEffect(() => {
-    if (!openIntent || !persistenceKey) {
-      return;
-    }
-
-    if (!currentOpenIntentKey) {
-      return;
-    }
-
-    const intentKey = currentOpenIntentKey;
-    if (consumedOpenIntentsRef.current.has(intentKey)) {
-      if (resolvedOpenIntentKey !== intentKey) {
-        setResolvedOpenIntentKey(intentKey);
-      }
-      return;
-    }
-    consumedOpenIntentsRef.current.add(intentKey);
-
-    if (currentOpenIntentPinnedAgentId) {
-      pinWorkspaceAgent(persistenceKey, currentOpenIntentPinnedAgentId);
-    }
-
-    if (openIntent.kind === "draft") {
-      const draftId = openIntent.draftId.trim();
-      const tabId = openWorkspaceDraftTab({
-        ...(draftId === "new" ? {} : { draftId }),
-        focus: true,
-      });
-      onOpenIntentConsumed?.();
-      return;
-    }
-
-    const target: WorkspaceTabTarget =
-      openIntent.kind === "agent"
-        ? { kind: "agent", agentId: openIntent.agentId }
-        : openIntent.kind === "terminal"
-          ? { kind: "terminal", terminalId: openIntent.terminalId }
-          : { kind: "file", path: openIntent.path };
-    const tabId = openWorkspaceTab(persistenceKey, target);
-    if (tabId) {
-      focusWorkspaceTab(persistenceKey, tabId);
-    }
-    onOpenIntentConsumed?.();
-  }, [
-    currentOpenIntentPinnedAgentId,
-    currentOpenIntentKey,
-    focusWorkspaceTab,
-    onOpenIntentConsumed,
-    openIntent,
-    openWorkspaceDraftTab,
-    openWorkspaceTab,
-    pinWorkspaceAgent,
-    persistenceKey,
-  ]);
-
-  const unresolvedOpenIntent = currentOpenIntentKey && resolvedOpenIntentKey !== currentOpenIntentKey
-    ? openIntent
-    : null;
-  const resolvedPaneTabState = useMemo(
-    () =>
-      deriveWorkspacePaneState({
-        layout: workspaceLayout,
-        tabs: uiTabs,
-        preferredTarget:
-          unresolvedOpenIntent?.kind === "agent"
-            ? { kind: "agent", agentId: unresolvedOpenIntent.agentId }
-            : unresolvedOpenIntent?.kind === "terminal"
-              ? { kind: "terminal", terminalId: unresolvedOpenIntent.terminalId }
-              : unresolvedOpenIntent?.kind === "draft"
-                ? { kind: "draft", draftId: unresolvedOpenIntent.draftId }
-                : unresolvedOpenIntent?.kind === "file"
-                  ? { kind: "file", path: unresolvedOpenIntent.path }
-                  : null,
-      }),
-    [uiTabs, unresolvedOpenIntent, workspaceLayout]
-  );
-
-  useEffect(() => {
     if (!normalizedServerId || !normalizedWorkspaceId || !persistenceKey) {
       return;
     }
@@ -1115,7 +944,6 @@ function WorkspaceScreenContent({
         canPruneAgentTabs &&
         tab.target.kind === "agent" &&
         !pinnedAgentIds.has(tab.target.agentId) &&
-        tab.target.agentId !== currentOpenIntentPinnedAgentId &&
         shouldPruneWorkspaceAgentTab({
           agentId: tab.target.agentId,
           agentsHydrated: hasHydratedAgents,
@@ -1135,7 +963,6 @@ function WorkspaceScreenContent({
     }
   }, [
     closeWorkspaceTabWithCleanup,
-    currentOpenIntentPinnedAgentId,
     ensureWorkspaceTab,
     hasHydratedAgents,
     pendingByDraftId,
@@ -1147,25 +974,8 @@ function WorkspaceScreenContent({
     workspaceAgentVisibility,
   ]);
 
-  const activeTabId = resolvedPaneTabState.activeTabId;
-  const activeTab = resolvedPaneTabState.activeTab;
-
-  useEffect(() => {
-    if (!openIntent || !currentOpenIntentKey) {
-      return;
-    }
-    if (resolvedOpenIntentKey === currentOpenIntentKey) {
-      return;
-    }
-    if (
-      openIntentMatchesActiveTab({
-        openIntent,
-        activeTab,
-      })
-    ) {
-      setResolvedOpenIntentKey(currentOpenIntentKey);
-    }
-  }, [activeTab, currentOpenIntentKey, openIntent, resolvedOpenIntentKey]);
+  const activeTabId = focusedPaneTabState.activeTabId;
+  const activeTab = focusedPaneTabState.activeTab;
 
   useEffect(() => {
     if (!activeTabId || !persistenceKey) {
@@ -1175,8 +985,8 @@ function WorkspaceScreenContent({
   }, [activeTabId, focusWorkspaceTab, persistenceKey]);
 
   const tabs = useMemo<WorkspaceTabDescriptor[]>(
-    () => resolvedPaneTabState.tabs.map((tab) => tab.descriptor),
-    [resolvedPaneTabState.tabs]
+    () => focusedPaneTabState.tabs.map((tab) => tab.descriptor),
+    [focusedPaneTabState.tabs]
   );
 
   const navigateToTabId = useCallback(
@@ -1192,10 +1002,6 @@ function WorkspaceScreenContent({
   const emptyWorkspaceSeedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!persistenceKey) {
-      return;
-    }
-    if (openIntent) {
-      emptyWorkspaceSeedRef.current = null;
       return;
     }
     if (workspaceAgentVisibility.activeAgentIds.size > 0 || terminals.length > 0) {
@@ -1215,7 +1021,6 @@ function WorkspaceScreenContent({
   }, [
     normalizedServerId,
     normalizedWorkspaceId,
-    openIntent,
     openWorkspaceDraftTab,
     persistenceKey,
     terminals.length,

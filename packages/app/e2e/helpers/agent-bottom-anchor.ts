@@ -2,10 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
-import {
-  buildHostWorkspaceAgentRoute,
-  buildHostWorkspaceRoute,
-} from "../../src/utils/host-routes";
+import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
 const NEAR_BOTTOM_THRESHOLD_PX = 72;
 
@@ -162,7 +159,7 @@ export async function seedBottomAnchorAgent(input: {
     id: created.id,
     title,
     expectedTailText,
-    url: buildHostWorkspaceAgentRoute(getServerId(), input.cwd, created.id),
+    url: `${buildHostWorkspaceRoute(getServerId(), input.cwd)}?open=${encodeURIComponent(`agent:${created.id}`)}`,
     workspaceUrl: buildHostWorkspaceRoute(getServerId(), input.cwd),
   };
 }

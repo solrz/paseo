@@ -9,14 +9,14 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useCallback, useMemo, useState, type ReactElement } from 'react'
-import { router, type Href } from 'expo-router'
+import { router } from 'expo-router'
 import { StyleSheet, UnistylesRuntime, useUnistyles } from 'react-native-unistyles'
 import { formatTimeAgo } from '@/utils/time'
 import { shortenPath } from '@/utils/shorten-path'
 import { type AggregatedAgent } from '@/hooks/use-aggregated-agents'
 import { useSessionStore } from '@/stores/session-store'
 import { AgentStatusDot } from '@/components/agent-status-dot'
-import { buildHostWorkspaceAgentRoute } from '@/utils/host-routes'
+import { prepareWorkspaceTab } from '@/utils/workspace-navigation'
 
 interface AgentListProps {
   agents: AggregatedAgent[]
@@ -272,8 +272,12 @@ export function AgentList({
 
       onAgentSelect?.()
 
-      const route: Href = buildHostWorkspaceAgentRoute(serverId, agent.cwd, agentId) as Href
-      router.navigate(route)
+      const route = prepareWorkspaceTab({
+        serverId,
+        workspaceId: agent.cwd,
+        target: { kind: 'agent', agentId },
+      })
+      router.navigate(route as any)
     },
     [isActionSheetVisible, onAgentSelect]
   )
