@@ -30,6 +30,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  ExternalLink,
   FolderGit2,
   GitPullRequest,
   Monitor,
@@ -97,15 +98,10 @@ const workspaceKeyExtractor = (workspace: SidebarWorkspaceEntry) => workspace.wo
 const projectKeyExtractor = (project: SidebarProjectEntry) => project.projectKey;
 const EMPTY_WORKSPACES = new Map();
 const WORKSPACE_STATUS_DOT_WIDTH = 14;
-const GITHUB_PR_STATE_COLORS: Record<PrHint["state"], string> = {
-  open: "#3fb950",
-  merged: "#a371f7",
-  closed: "#f85149",
-};
-const GITHUB_PR_STATE_COLORS_HOVER: Record<PrHint["state"], string> = {
-  open: "#56d364",
-  merged: "#bc8cff",
-  closed: "#ff7b72",
+const GITHUB_PR_STATE_LABELS: Record<PrHint["state"], string> = {
+  open: "Open",
+  merged: "Merged",
+  closed: "Closed",
 };
 
 interface SidebarWorkspaceListProps {
@@ -166,10 +162,9 @@ interface WorkspaceRowInnerProps {
 }
 
 function WorkspacePrBadge({ hint }: { hint: PrHint }) {
-  const color = GITHUB_PR_STATE_COLORS[hint.state];
-  const hoverColor = GITHUB_PR_STATE_COLORS_HOVER[hint.state];
+  const { theme } = useUnistyles();
   const [isHovered, setIsHovered] = useState(false);
-  const activeColor = isHovered ? hoverColor : color;
+  const activeColor = isHovered ? theme.colors.foreground : theme.colors.foregroundMuted;
 
   const handlePressIn = useCallback((event: GestureResponderEvent) => {
     event.stopPropagation();
@@ -202,12 +197,12 @@ function WorkspacePrBadge({ hint }: { hint: PrHint }) {
         style={[
           styles.workspacePrBadgeText,
           { color: activeColor },
-          isHovered && styles.workspacePrBadgeTextHovered,
         ]}
         numberOfLines={1}
       >
-        #{hint.number}
+        #{hint.number} · {GITHUB_PR_STATE_LABELS[hint.state]}
       </Text>
+      {isHovered && <ExternalLink size={10} color={activeColor} />}
     </Pressable>
   );
 }
@@ -2221,9 +2216,6 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
     lineHeight: 14,
   },
-  workspacePrBadgeTextHovered: {
-    textDecorationLine: "underline",
-  },
   workspaceCreatingText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
@@ -2238,12 +2230,12 @@ const styles = StyleSheet.create((theme) => ({
   diffStatAdditions: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.palette.green[400],
+    color: "#2d8a4e",
   },
   diffStatDeletions: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.palette.red[500],
+    color: "#c43a31",
   },
   kebabButton: {
     padding: 2,
