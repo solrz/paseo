@@ -10,7 +10,7 @@ dotenv.config({
 const daemonRunnerEntry = fileURLToPath(new URL("./daemon-runner.ts", import.meta.url));
 const result = spawnSync(
   process.execPath,
-  [...process.execArgv, daemonRunnerEntry, "--dev", ...process.argv.slice(2)],
+  ["--inspect", "--heapsnapshot-near-heap-limit=3", ...process.execArgv, daemonRunnerEntry, "--dev", ...process.argv.slice(2)],
   {
     stdio: "inherit",
     env: process.env,
