@@ -14,6 +14,7 @@ export interface UseDesktopPermissionsReturn {
   isRefreshing: boolean;
   requestingPermission: DesktopPermissionKind | null;
   isSendingTestNotification: boolean;
+  testNotificationError: string | null;
   refreshPermissions: () => Promise<void>;
   requestPermission: (kind: DesktopPermissionKind) => Promise<void>;
   sendTestNotification: () => Promise<void>;
@@ -112,22 +113,25 @@ export function useDesktopPermissions(): UseDesktopPermissionsReturn {
     [isDesktop, refreshPermissions],
   );
 
+  const [testNotificationError, setTestNotificationError] = useState<string | null>(null);
+
   const sendTestNotification = useCallback(async () => {
     if (!isDesktop) {
       return;
     }
 
     setIsSendingTestNotification(true);
+    setTestNotificationError(null);
     try {
       const sent = await sendOsNotification({
         title: "Paseo notification test",
         body: "If you can see this, desktop notifications work.",
       });
       if (!sent) {
-        console.warn("[Settings] Desktop test notification was not delivered");
+        setTestNotificationError("Notification was not delivered. Check System Settings > Notifications.");
       }
     } catch (error) {
-      console.error("[Settings] Failed to send desktop test notification", error);
+      setTestNotificationError("Failed to send notification.");
     } finally {
       if (isMountedRef.current) {
         setIsSendingTestNotification(false);
@@ -149,6 +153,7 @@ export function useDesktopPermissions(): UseDesktopPermissionsReturn {
     isRefreshing,
     requestingPermission,
     isSendingTestNotification,
+    testNotificationError,
     refreshPermissions,
     requestPermission,
     sendTestNotification,

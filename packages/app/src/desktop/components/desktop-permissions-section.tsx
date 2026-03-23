@@ -14,6 +14,7 @@ export function DesktopPermissionsSection() {
     isRefreshing,
     requestingPermission,
     isSendingTestNotification,
+    testNotificationError,
     refreshPermissions,
     requestPermission,
     sendTestNotification,
@@ -58,6 +59,11 @@ export function DesktopPermissionsSection() {
             void sendTestNotification();
           }}
         />
+        {testNotificationError ? (
+          <Text style={[styles.errorText, { color: theme.colors.danger }]}>
+            {testNotificationError}
+          </Text>
+        ) : null}
         <DesktopPermissionRow
           title="Microphone"
           showBorder
@@ -79,5 +85,10 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     gap: theme.spacing[2],
     marginBottom: theme.spacing[3],
+  },
+  errorText: {
+    fontSize: theme.fontSize.xs,
+    paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[2],
   },
 }));
