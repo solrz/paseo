@@ -6,6 +6,8 @@ import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyl
 import { encodeTerminalKeyInput } from "@server/shared/terminal-key-input";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
+import { useAppVisible } from "@/hooks/use-app-visible";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import {
   hasPendingTerminalModifiers,
   normalizeTerminalTransportKey,
@@ -86,6 +88,7 @@ export function TerminalPane({
   isPaneFocused,
 }: TerminalPaneProps) {
   const isScreenFocused = useIsFocused();
+  const isAppVisible = useAppVisible();
   const { theme } = useUnistyles();
   const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme.colors.terminal]);
   const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
@@ -142,6 +145,13 @@ export function TerminalPane({
     lastAutoFocusKeyRef.current = nextFocusKey;
     requestTerminalFocus();
   }, [isMobile, isPaneFocused, isScreenFocused, requestTerminalFocus, scopeKey, terminalId]);
+
+  useEffect(() => {
+    if (isPaneFocused && isScreenFocused && isAppVisible && terminalId) {
+      lastReportedSizeRef.current = null;
+      requestTerminalReflow();
+    }
+  }, [isAppVisible, isPaneFocused, isScreenFocused, requestTerminalReflow, terminalId]);
 
   const clearKeyboardRefitTimeouts = useCallback(() => {
     if (keyboardRefitTimeoutsRef.current.length === 0) {
@@ -462,10 +472,10 @@ export function TerminalPane({
     ],
   );
 
-  const handleTerminalResize = useCallback(
-    async (input: { rows: number; cols: number }) => {
+  const handleTerminalResize = useStableEvent(
+    (input: { rows: number; cols: number }) => {
       const { rows, cols } = input;
-      if (!client || !terminalId || rows <= 0 || cols <= 0) {
+      if (!client || !terminalId || !isPaneFocused || !isScreenFocused || !isAppVisible || rows <= 0 || cols <= 0) {
         return;
       }
       const normalizedRows = Math.floor(rows);
@@ -481,7 +491,6 @@ export function TerminalPane({
         cols: normalizedCols,
       });
     },
-    [client, terminalId],
   );
 
   const handleTerminalKey = useCallback(
