@@ -30,7 +30,7 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
-import type { AgentStorage } from "./agent-storage.js";
+import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import { AGENT_PROVIDER_IDS } from "./provider-manifest.js";
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
@@ -797,6 +797,12 @@ export class AgentManager {
     }
 
     agent.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
+    if (agent.runtimeInfo) {
+      agent.runtimeInfo = {
+        ...agent.runtimeInfo,
+        thinkingOptionId: normalizedThinkingOptionId,
+      };
+    }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
   }
@@ -809,15 +815,15 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     await this.persistSnapshot(agent, { title: normalizedTitle });
-    this.emitState(agent);
+    this.emitState(agent, { persist: false });
   }
 
   async setLabels(agentId: string, labels: Record<string, string>): Promise<void> {
     const agent = this.requireAgent(agentId);
     agent.labels = { ...agent.labels, ...labels };
-    await this.persistSnapshot(agent);
     this.touchUpdatedAt(agent);
-    this.emitState(agent);
+    await this.persistSnapshot(agent);
+    this.emitState(agent, { persist: false });
   }
 
   notifyAgentState(agentId: string): void {
@@ -834,8 +840,103 @@ export class AgentManager {
     if (agent.attention.requiresAttention) {
       agent.attention = { requiresAttention: false };
       await this.persistSnapshot(agent);
-      this.emitState(agent);
+      this.emitState(agent, { persist: false });
     }
+  }
+
+  async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
+    const registry = this.requireRegistry();
+    const liveAgent = this.getAgent(agentId);
+    if (liveAgent) {
+      await this.persistSnapshot(liveAgent, {
+        internal: liveAgent.internal,
+      });
+    }
+
+    const record = await registry.get(agentId);
+    if (!record) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
+
+    const normalizedStatus =
+      record.lastStatus === "running" || record.lastStatus === "initializing"
+        ? "idle"
+        : record.lastStatus;
+
+    const nextRecord: StoredAgentRecord = {
+      ...record,
+      archivedAt,
+      lastStatus: normalizedStatus,
+      requiresAttention: false,
+      attentionReason: null,
+      attentionTimestamp: null,
+    };
+    await registry.upsert(nextRecord);
+    return nextRecord;
+  }
+
+  async unarchiveSnapshot(agentId: string): Promise<boolean> {
+    const registry = this.requireRegistry();
+    const record = await registry.get(agentId);
+    if (!record || !record.archivedAt) {
+      return false;
+    }
+
+    await registry.upsert({
+      ...record,
+      archivedAt: null,
+    });
+
+    if (this.getAgent(agentId)) {
+      this.notifyAgentState(agentId);
+    }
+    return true;
+  }
+
+  async unarchiveSnapshotByHandle(handle: AgentPersistenceHandle): Promise<void> {
+    const registry = this.requireRegistry();
+    const records = await registry.list();
+    const matched = records.find(
+      (record) =>
+        record.persistence?.provider === handle.provider &&
+        record.persistence?.sessionId === handle.sessionId,
+    );
+    if (!matched) {
+      return;
+    }
+
+    await this.unarchiveSnapshot(matched.id);
+  }
+
+  async updateAgentMetadata(
+    agentId: string,
+    updates: {
+      title?: string;
+      labels?: Record<string, string>;
+    },
+  ): Promise<void> {
+    const liveAgent = this.getAgent(agentId);
+    if (liveAgent) {
+      if (updates.title) {
+        await this.setTitle(agentId, updates.title);
+      }
+      if (updates.labels) {
+        await this.setLabels(agentId, updates.labels);
+      }
+      return;
+    }
+
+    const registry = this.requireRegistry();
+    const existing = await registry.get(agentId);
+    if (!existing) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
+
+    await registry.upsert({
+      ...existing,
+      ...(updates.title ? { title: updates.title } : {}),
+      ...(updates.labels ? { labels: { ...existing.labels, ...updates.labels } } : {}),
+    });
   }
 
   async runAgent(
@@ -1263,6 +1364,12 @@ export class AgentManager {
     // (e.g., plan approval changes mode from "plan" to "acceptEdits")
     try {
       agent.currentModeId = await agent.session.getCurrentMode();
+      if (agent.runtimeInfo) {
+        agent.runtimeInfo = {
+          ...agent.runtimeInfo,
+          modeId: agent.currentModeId,
+        };
+      }
     } catch {
       // Ignore errors from getCurrentMode - mode tracking is best effort
     }
@@ -1652,12 +1759,12 @@ export class AgentManager {
     await this.persistSnapshot(managed, {
       title: initialPersistedTitle,
     });
-    this.emitState(managed);
+    this.emitState(managed, { persist: false });
 
     await this.refreshSessionState(managed);
     managed.lifecycle = "idle";
     await this.persistSnapshot(managed);
-    this.emitState(managed);
+    this.emitState(managed, { persist: false });
     this.subscribeToSession(managed);
     return { ...managed };
   }
@@ -1805,6 +1912,13 @@ export class AgentManager {
       return;
     }
     await this.registry.applySnapshot(agent, options);
+  }
+
+  private requireRegistry(): AgentStorage {
+    if (!this.registry) {
+      throw new Error("Agent storage unavailable");
+    }
+    return this.registry;
   }
 
   private async refreshSessionState(agent: ActiveManagedAgent): Promise<void> {
@@ -2251,9 +2365,12 @@ export class AgentManager {
     return row;
   }
 
-  private emitState(agent: ManagedAgent): void {
+  private emitState(agent: ManagedAgent, options?: { persist?: boolean }): void {
     // Keep attention as an edge-triggered unread signal, not a level signal.
     this.checkAndSetAttention(agent);
+    if (options?.persist !== false) {
+      this.enqueueBackgroundPersist(agent);
+    }
 
     this.dispatch({
       type: "agent_state",
@@ -2286,7 +2403,6 @@ export class AgentManager {
         attentionTimestamp: new Date(),
       };
       this.broadcastAgentAttention(agent, "finished");
-      this.enqueueBackgroundPersist(agent);
       return;
     }
 
@@ -2298,7 +2414,6 @@ export class AgentManager {
         attentionTimestamp: new Date(),
       };
       this.broadcastAgentAttention(agent, "error");
-      this.enqueueBackgroundPersist(agent);
       return;
     }
   }

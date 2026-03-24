@@ -85,7 +85,6 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { initializeSpeechRuntime } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
-import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import { createAllClients, shutdownProviders } from "./agent/provider-registry.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
@@ -377,12 +376,6 @@ export async function createPaseoDaemon(
     });
 
     const terminalManager = createTerminalManager();
-
-    const detachAgentStoragePersistence = attachAgentStoragePersistence(
-      logger,
-      agentManager,
-      agentStorage,
-    );
     await agentStorage.initialize();
     logger.info({ elapsed: elapsed() }, "Agent storage initialized");
     await bootstrapWorkspaceRegistries({
@@ -709,7 +702,6 @@ export async function createPaseoDaemon(
     const stop = async () => {
       await closeAllAgents(logger, agentManager);
       await agentManager.flush().catch(() => undefined);
-      detachAgentStoragePersistence();
       await agentStorage.flush().catch(() => undefined);
       await shutdownProviders(logger, {
         runtimeSettings: config.agentProviderSettings,

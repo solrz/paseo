@@ -1940,37 +1940,7 @@ export class Session {
     }
 
     const archivedAt = new Date().toISOString();
-    const existing = await this.agentStorage.get(agentId);
-    let archivedRecord: StoredAgentRecord | null = existing;
-    if (!archivedRecord) {
-      const liveAgent = this.agentManager.getAgent(agentId);
-      if (!liveAgent) {
-        throw new Error(`Agent not found: ${agentId}`);
-      }
-
-      await this.agentStorage.applySnapshot(liveAgent, {
-        internal: liveAgent.internal,
-      });
-      archivedRecord = await this.agentStorage.get(agentId);
-      if (!archivedRecord) {
-        throw new Error(`Agent not found in storage after snapshot: ${agentId}`);
-      }
-    }
-
-    const normalizedStatus =
-      archivedRecord.lastStatus === "running" || archivedRecord.lastStatus === "initializing"
-        ? "idle"
-        : archivedRecord.lastStatus;
-
-    const nextRecord: StoredAgentRecord = {
-      ...archivedRecord,
-      archivedAt,
-      lastStatus: normalizedStatus,
-      requiresAttention: false,
-      attentionReason: null,
-      attentionTimestamp: null,
-    };
-    await this.agentStorage.upsert(nextRecord);
+    const nextRecord = await this.agentManager.archiveSnapshot(agentId, archivedAt);
 
     // Unload the agent from memory — the storage record is the source of truth now.
     // This tears down the provider session and drops the hydrated timeline,
@@ -1987,29 +1957,11 @@ export class Session {
   }
 
   private async unarchiveAgentState(agentId: string): Promise<boolean> {
-    const record = await this.agentStorage.get(agentId);
-    if (!record || !record.archivedAt) {
-      return false;
-    }
-    await this.agentStorage.upsert({
-      ...record,
-      archivedAt: null,
-    });
-    this.agentManager.notifyAgentState(agentId);
-    return true;
+    return this.agentManager.unarchiveSnapshot(agentId);
   }
 
   private async unarchiveAgentByHandle(handle: AgentPersistenceHandle): Promise<void> {
-    const records = await this.agentStorage.list();
-    const matched = records.find(
-      (record) =>
-        record.persistence?.provider === handle.provider &&
-        record.persistence?.sessionId === handle.sessionId,
-    );
-    if (!matched) {
-      return;
-    }
-    await this.unarchiveAgentState(matched.id);
+    await this.agentManager.unarchiveSnapshotByHandle(handle);
   }
 
   private async handleUpdateAgentRequest(
@@ -2045,26 +1997,10 @@ export class Session {
     }
 
     try {
-      const liveAgent = this.agentManager.getAgent(agentId);
-      if (liveAgent) {
-        if (normalizedName) {
-          await this.agentManager.setTitle(agentId, normalizedName);
-        }
-        if (normalizedLabels) {
-          await this.agentManager.setLabels(agentId, normalizedLabels);
-        }
-      } else {
-        const existing = await this.agentStorage.get(agentId);
-        if (!existing) {
-          throw new Error(`Agent not found: ${agentId}`);
-        }
-
-        await this.agentStorage.upsert({
-          ...existing,
-          ...(normalizedName ? { title: normalizedName } : {}),
-          ...(normalizedLabels ? { labels: { ...existing.labels, ...normalizedLabels } } : {}),
-        });
-      }
+      await this.agentManager.updateAgentMetadata(agentId, {
+        ...(normalizedName ? { title: normalizedName } : {}),
+        ...(normalizedLabels ? { labels: normalizedLabels } : {}),
+      });
 
       this.emit({
         type: "update_agent_response",

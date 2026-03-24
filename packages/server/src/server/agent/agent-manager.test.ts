@@ -742,6 +742,144 @@ describe("AgentManager", () => {
     expect(live!.updatedAt.getTime()).toBeGreaterThan(Date.parse(before!.updatedAt));
   });
 
+  test("persists live mode, model, and thinking changes without an external snapshot subscriber", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-persist-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000132",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      modeId: "plan",
+      model: "gpt-5.2-codex",
+      thinkingOptionId: "low",
+    });
+
+    await manager.setAgentMode(snapshot.id, "build");
+    await manager.setAgentModel(snapshot.id, "gpt-5.4");
+    await manager.setAgentThinkingOption(snapshot.id, "high");
+    await manager.flush();
+
+    const persisted = await storage.get(snapshot.id);
+    expect(persisted).not.toBeNull();
+    expect(persisted?.lastModeId).toBe("build");
+    expect(persisted?.config?.model).toBe("gpt-5.4");
+    expect(persisted?.config?.thinkingOptionId).toBe("high");
+    expect(persisted?.runtimeInfo?.modeId).toBe("build");
+    expect(persisted?.runtimeInfo?.model).toBe("gpt-5.4");
+  });
+
+  test("setLabels merges and persists labels", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-set-labels-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000133",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Label test",
+    });
+
+    await manager.setLabels(snapshot.id, { surface: "mobile" });
+    await manager.setLabels(snapshot.id, { phase: "1a" });
+
+    const persisted = await storage.get(snapshot.id);
+    expect(persisted?.labels).toEqual({
+      surface: "mobile",
+      phase: "1a",
+    });
+  });
+
+  test("runAgent persists finished attention and idle status without an external snapshot subscriber", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-finished-attention-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000134",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Finished attention test",
+    });
+
+    await manager.runAgent(snapshot.id, "say hello");
+    await manager.flush();
+
+    const persisted = await storage.get(snapshot.id);
+    expect(persisted?.lastStatus).toBe("idle");
+    expect(persisted?.requiresAttention).toBe(true);
+    expect(persisted?.attentionReason).toBe("finished");
+    expect(persisted?.attentionTimestamp).toEqual(expect.any(String));
+  });
+
+  test("archiveSnapshot clears persisted attention and normalizes running status", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-attention-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000135",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Archive attention test",
+    });
+
+    const live = manager.getAgent(snapshot.id);
+    expect(live).not.toBeNull();
+    live!.lifecycle = "running";
+    live!.attention = {
+      requiresAttention: true,
+      attentionReason: "finished",
+      attentionTimestamp: new Date("2025-01-02T00:00:00.000Z"),
+    };
+
+    const archivedAt = "2025-01-03T00:00:00.000Z";
+    const archivedRecord = await manager.archiveSnapshot(snapshot.id, archivedAt);
+
+    expect(archivedRecord.archivedAt).toBe(archivedAt);
+    expect(archivedRecord.lastStatus).toBe("idle");
+    expect(archivedRecord.requiresAttention).toBe(false);
+    expect(archivedRecord.attentionReason).toBeNull();
+    expect(archivedRecord.attentionTimestamp).toBeNull();
+
+    const persisted = await storage.get(snapshot.id);
+    expect(persisted?.archivedAt).toBe(archivedAt);
+    expect(persisted?.lastStatus).toBe("idle");
+    expect(persisted?.requiresAttention).toBe(false);
+    expect(persisted?.attentionReason).toBeNull();
+    expect(persisted?.attentionTimestamp).toBeNull();
+  });
+
   test("reloadAgentSession cancels active run and resumes existing session once thread_started is observed", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-active-"));
     const storagePath = join(workdir, "agents");
@@ -2541,6 +2679,7 @@ describe("AgentManager", () => {
     });
 
     await expect(manager.runAgent(agent.id, "fail once")).rejects.toThrow("boom-1");
+    await manager.flush();
 
     const afterFirstFailure = manager.getAgent(agent.id);
     expect(afterFirstFailure?.lifecycle).toBe("error");
@@ -2550,14 +2689,26 @@ describe("AgentManager", () => {
       attentionReason: "error",
     });
 
+    const persistedAfterFirstFailure = await storage.get(agent.id);
+    expect(persistedAfterFirstFailure?.lastStatus).toBe("error");
+    expect(persistedAfterFirstFailure?.requiresAttention).toBe(true);
+    expect(persistedAfterFirstFailure?.attentionReason).toBe("error");
+
     await manager.clearAgentAttention(agent.id);
     manager.notifyAgentState(agent.id);
+    await manager.flush();
 
     const afterClear = manager.getAgent(agent.id);
     expect(afterClear?.lifecycle).toBe("error");
     expect(afterClear?.attention).toEqual({ requiresAttention: false });
 
+    const persistedAfterClear = await storage.get(agent.id);
+    expect(persistedAfterClear?.lastStatus).toBe("error");
+    expect(persistedAfterClear?.requiresAttention).toBe(false);
+    expect(persistedAfterClear?.attentionReason).toBeNull();
+
     await expect(manager.runAgent(agent.id, "fail again")).rejects.toThrow("boom-2");
+    await manager.flush();
 
     const afterSecondFailure = manager.getAgent(agent.id);
     expect(afterSecondFailure?.lifecycle).toBe("error");
@@ -2566,6 +2717,11 @@ describe("AgentManager", () => {
       attentionReason: "error",
     });
     expect(attentionReasons).toEqual(["error", "error"]);
+
+    const persistedAfterSecondFailure = await storage.get(agent.id);
+    expect(persistedAfterSecondFailure?.lastStatus).toBe("error");
+    expect(persistedAfterSecondFailure?.requiresAttention).toBe(true);
+    expect(persistedAfterSecondFailure?.attentionReason).toBe("error");
   });
 
   test("turn_failed emits a system error assistant timeline message and keeps error lifecycle", async () => {
@@ -2929,6 +3085,10 @@ describe("AgentManager", () => {
     // The manager should have updated currentModeId to reflect this
     const updatedAgent = manager.getAgent(snapshot.id);
     expect(updatedAgent?.currentModeId).toBe("acceptEdits");
+
+    await manager.flush();
+    const persisted = await storage.get(snapshot.id);
+    expect(persisted?.lastModeId).toBe("acceptEdits");
   });
 
   test("close during in-flight stream does not clear persistence sessionId", async () => {
