@@ -3,7 +3,7 @@ import type {
   AgentTimelineFetchOptions,
   AgentTimelineFetchResult,
   AgentTimelineRow,
-} from "./agent-manager.js";
+} from "./agent-timeline-store-types.js";
 
 export type SeedAgentTimelineOptions = {
   items?: readonly AgentTimelineItem[];

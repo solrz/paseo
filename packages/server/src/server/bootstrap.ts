@@ -89,6 +89,7 @@ import { createAgentMcpServer } from "./agent/mcp-server.js";
 import { createAllClients, shutdownProviders } from "./agent/provider-registry.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { DbAgentSnapshotStore } from "./db/db-agent-snapshot-store.js";
+import { DbAgentTimelineStore } from "./db/db-agent-timeline-store.js";
 import { DbProjectRegistry } from "./db/db-project-registry.js";
 import { DbWorkspaceRegistry } from "./db/db-workspace-registry.js";
 import { importLegacyAgentSnapshots } from "./db/legacy-agent-snapshot-import.js";
@@ -364,6 +365,7 @@ export async function createPaseoDaemon(
     database = await openPaseoDatabase(path.join(config.paseoHome, "db"));
     logger.info({ elapsed: elapsed() }, "Paseo database opened");
     const agentStorage = new DbAgentSnapshotStore(database.db);
+    const durableTimelineStore = new DbAgentTimelineStore(database.db);
     const agentManager = new AgentManager({
       clients: {
         ...createAllClients(logger, {
@@ -372,6 +374,7 @@ export async function createPaseoDaemon(
         ...config.agentClients,
       },
       registry: agentStorage,
+      durableTimelineStore,
       logger,
     });
 

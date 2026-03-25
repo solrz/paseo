@@ -36,9 +36,23 @@ import {
   InMemoryAgentTimelineStore,
   type SeedAgentTimelineOptions,
 } from "./agent-timeline-store.js";
+import type {
+  AgentTimelineFetchOptions,
+  AgentTimelineFetchResult,
+  AgentTimelineRow,
+  AgentTimelineStore,
+} from "./agent-timeline-store-types.js";
 import { AGENT_PROVIDER_IDS } from "./provider-manifest.js";
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
+export type {
+  AgentTimelineCursor,
+  AgentTimelineFetchDirection,
+  AgentTimelineFetchOptions,
+  AgentTimelineFetchResult,
+  AgentTimelineRow,
+  AgentTimelineWindow,
+} from "./agent-timeline-store-types.js";
 
 export type AgentManagerEvent =
   | { type: "agent_state"; agent: ManagedAgent }
@@ -77,6 +91,7 @@ export type AgentManagerOptions = {
   idFactory?: () => string;
   registry?: AgentSnapshotStore;
   onAgentAttention?: AgentAttentionCallback;
+  durableTimelineStore?: AgentTimelineStore;
   logger: Logger;
 };
 
@@ -93,43 +108,6 @@ export type WaitForAgentResult = {
 
 export type WaitForAgentStartOptions = {
   signal?: AbortSignal;
-};
-
-export type AgentTimelineRow = {
-  seq: number;
-  timestamp: string;
-  item: AgentTimelineItem;
-};
-
-export type AgentTimelineCursor = {
-  seq: number;
-};
-
-export type AgentTimelineFetchDirection = "tail" | "before" | "after";
-
-export type AgentTimelineFetchOptions = {
-  direction?: AgentTimelineFetchDirection;
-  cursor?: AgentTimelineCursor;
-  /**
-   * Number of canonical rows to return.
-   * - undefined: manager default
-   * - 0: all rows in the selected window
-   */
-  limit?: number;
-};
-
-export type AgentTimelineWindow = {
-  minSeq: number;
-  maxSeq: number;
-  nextSeq: number;
-};
-
-export type AgentTimelineFetchResult = {
-  direction: AgentTimelineFetchDirection;
-  window: AgentTimelineWindow;
-  hasOlder: boolean;
-  hasNewer: boolean;
-  rows: AgentTimelineRow[];
 };
 
 type AttentionState =
@@ -305,6 +283,7 @@ export class AgentManager {
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
   private readonly registry?: AgentSnapshotStore;
+  private readonly durableTimelineStore?: AgentTimelineStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private onAgentAttention?: AgentAttentionCallback;
@@ -313,6 +292,7 @@ export class AgentManager {
   constructor(options: AgentManagerOptions) {
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
+    this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     if (options?.clients) {
@@ -671,6 +651,7 @@ export class AgentManager {
     };
     await session.close();
     this.timelineStore.delete(agentId);
+    this.enqueueDurableTimelineDelete(agentId);
     this.emitState(closedAgent);
     this.logger.trace({ agentId }, "closeAgent: completed");
   }
@@ -1630,6 +1611,9 @@ export class AgentManager {
     if (timelineSeed || !this.timelineStore.has(resolvedAgentId)) {
       this.timelineStore.initialize(resolvedAgentId, timelineSeed ?? { timestamp: now.toISOString() });
     }
+    if (options?.timelineRows?.length) {
+      this.enqueueDurableTimelineBulkInsert(resolvedAgentId, options.timelineRows);
+    }
 
     const managed = {
       id: resolvedAgentId,
@@ -2221,7 +2205,9 @@ export class AgentManager {
   }
 
   private recordTimeline(agentId: string, item: AgentTimelineItem): AgentTimelineRow {
-    return this.timelineStore.append(agentId, item);
+    const row = this.timelineStore.append(agentId, item);
+    this.enqueueDurableTimelineAppend(agentId, row);
+    return row;
   }
 
   private emitState(agent: ManagedAgent, options?: { persist?: boolean }): void {
@@ -2280,6 +2266,48 @@ export class AgentManager {
   private enqueueBackgroundPersist(agent: ManagedAgent): void {
     const task = this.persistSnapshot(agent).catch((err) => {
       this.logger.error({ err, agentId: agent.id }, "Failed to persist agent snapshot");
+    });
+    this.trackBackgroundTask(task);
+  }
+
+  private enqueueDurableTimelineAppend(agentId: string, row: AgentTimelineRow): void {
+    if (!this.durableTimelineStore) {
+      return;
+    }
+    const task = this.durableTimelineStore
+      .appendCommitted(agentId, row.item, { timestamp: row.timestamp })
+      .then(() => undefined)
+      .catch((err) => {
+        this.logger.error(
+          { err, agentId, seq: row.seq, itemType: row.item.type },
+          "Failed to append timeline row to durable store",
+        );
+      });
+    this.trackBackgroundTask(task);
+  }
+
+  private enqueueDurableTimelineBulkInsert(
+    agentId: string,
+    rows: readonly AgentTimelineRow[],
+  ): void {
+    if (!this.durableTimelineStore || rows.length === 0) {
+      return;
+    }
+    const task = this.durableTimelineStore.bulkInsert(agentId, rows).catch((err) => {
+      this.logger.error(
+        { err, agentId, rowCount: rows.length },
+        "Failed to seed durable timeline store",
+      );
+    });
+    this.trackBackgroundTask(task);
+  }
+
+  private enqueueDurableTimelineDelete(agentId: string): void {
+    if (!this.durableTimelineStore) {
+      return;
+    }
+    const task = this.durableTimelineStore.deleteAgent(agentId).catch((err) => {
+      this.logger.error({ err, agentId }, "Failed to delete durable timeline rows");
     });
     this.trackBackgroundTask(task);
   }
