@@ -1689,10 +1689,11 @@ export class Session {
 
     try {
       await this.agentStorage.remove(agentId);
+      await this.agentManager.deleteCommittedTimeline(agentId);
     } catch (error: any) {
       this.sessionLogger.error(
         { err: error, agentId },
-        `Failed to remove agent ${agentId} from registry`,
+        `Failed to fully delete agent ${agentId}`,
       );
     }
 

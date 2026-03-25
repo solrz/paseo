@@ -712,6 +712,137 @@ describe("AgentManager", () => {
     expect(afterReload?.config?.title).toBeUndefined();
   });
 
+  test("resumeAgentFromPersistence seeds live helpers from durable rows and skips provider replay", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-durable-seed-"));
+    const storagePath = join(workdir, "agents");
+    const dataDir = join(workdir, "db");
+    const storage = new AgentStorage(storagePath, logger);
+    const database = await openPaseoDatabase(dataDir);
+    let historyReplayCount = 0;
+    let manager: AgentManager | null = null;
+
+    class HistoryReplayProbeSession extends TestAgentSession {
+      async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        historyReplayCount += 1;
+        yield {
+          type: "timeline",
+          provider: this.provider,
+          item: { type: "assistant_message", text: "provider history replay" },
+        };
+      }
+    }
+
+    class HistoryReplayProbeClient implements AgentClient {
+      readonly provider = "codex" as const;
+      readonly capabilities = TEST_CAPABILITIES;
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+
+      async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new HistoryReplayProbeSession(config);
+      }
+
+      async resumeSession(
+        handle: AgentPersistenceHandle,
+        overrides?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+        return new HistoryReplayProbeSession({
+          ...metadata,
+          ...overrides,
+          provider: "codex",
+          cwd: overrides?.cwd ?? metadata.cwd ?? process.cwd(),
+        });
+      }
+    }
+
+    try {
+      const durableTimelineStore = new DbAgentTimelineStore(database.db);
+      manager = new AgentManager({
+        clients: {
+          codex: new HistoryReplayProbeClient(),
+        },
+        registry: storage,
+        durableTimelineStore,
+        logger,
+        idFactory: () => "00000000-0000-4000-8000-000000000128",
+      });
+
+      const snapshot = await manager.createAgent({
+        provider: "codex",
+        cwd: workdir,
+      });
+
+      await manager.appendTimelineItem(snapshot.id, {
+        type: "assistant_message",
+        text: "durable only",
+      });
+      await manager.flush();
+
+      const handle = manager.getAgent(snapshot.id)?.persistence;
+      expect(handle).not.toBeNull();
+      if (!handle) {
+        throw new Error("Expected persistence handle to be available");
+      }
+
+      await manager.closeAgent(snapshot.id);
+
+      await expect(durableTimelineStore.getCommittedRows(snapshot.id)).resolves.toEqual([
+        {
+          seq: 1,
+          timestamp: expect.any(String),
+          item: {
+            type: "assistant_message",
+            text: "durable only",
+          },
+        },
+      ]);
+
+      const resumed = await manager.resumeAgentFromPersistence(handle, undefined, snapshot.id);
+
+      expect(resumed.id).toBe(snapshot.id);
+      expect(manager.getTimeline(snapshot.id)).toEqual([
+        {
+          type: "assistant_message",
+          text: "durable only",
+        },
+      ]);
+      expect(manager.getLastAssistantMessage(snapshot.id)).toBe("durable only");
+      await expect(manager.getTimelineRows(snapshot.id)).resolves.toEqual([
+        {
+          seq: 1,
+          timestamp: expect.any(String),
+          item: {
+            type: "assistant_message",
+            text: "durable only",
+          },
+        },
+      ]);
+
+      await manager.hydrateTimelineFromProvider(snapshot.id);
+
+      expect(historyReplayCount).toBe(0);
+      expect(manager.getTimeline(snapshot.id)).toEqual([
+        {
+          type: "assistant_message",
+          text: "durable only",
+        },
+      ]);
+
+      await manager.closeAgent(snapshot.id);
+      await manager.deleteCommittedTimeline(snapshot.id);
+
+      await expect(durableTimelineStore.getCommittedRows(snapshot.id)).resolves.toEqual([]);
+    } finally {
+      await manager?.flush().catch(() => undefined);
+      await storage.flush().catch(() => undefined);
+      await database.close();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
   test("setTitle bumps updatedAt and persists title in the same snapshot write", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-set-title-updated-at-"));
     const storagePath = join(workdir, "agents");

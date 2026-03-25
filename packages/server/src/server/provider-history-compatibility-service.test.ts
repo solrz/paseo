@@ -6,6 +6,8 @@ import { describe, expect, test, vi } from "vitest";
 
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
+import { DbAgentTimelineStore } from "./db/db-agent-timeline-store.js";
+import { openPaseoDatabase } from "./db/pglite-database.js";
 import { ProviderHistoryCompatibilityService } from "./provider-history-compatibility-service.js";
 import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 
@@ -55,15 +57,17 @@ function createCompatibilitySnapshot(overrides?: Partial<Record<string, unknown>
 }
 
 describe("ProviderHistoryCompatibilityService", () => {
-  test("ensureAgentLoaded replays provider history for an unloaded persisted agent", async () => {
+  test("ensureAgentLoaded seeds the live timeline from durable rows for an unloaded persisted agent", async () => {
     const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), "provider-history-compat-load-"));
     const logger = pino({ level: "silent" });
+    const database = await openPaseoDatabase(path.join(workspaceRoot, "db"));
 
     try {
       const storage = new AgentStorage(path.join(workspaceRoot, "agents"), logger);
       const manager = new AgentManager({
         clients: createTestAgentClients(),
         registry: storage,
+        durableTimelineStore: new DbAgentTimelineStore(database.db),
         logger,
         idFactory: () => "00000000-0000-4000-8000-000000000301",
       });
@@ -81,6 +85,15 @@ describe("ProviderHistoryCompatibilityService", () => {
       await manager.runAgent(snapshot.id, "say 'timeline test'");
       await manager.flush();
       await storage.flush();
+      rmSync(
+        path.join(
+          os.tmpdir(),
+          "paseo-fake-provider-history",
+          "codex",
+          `${snapshot.persistence?.sessionId}.jsonl`,
+        ),
+        { force: true },
+      );
       await manager.closeAgent(snapshot.id);
 
       const loaded = await service.ensureAgentLoaded({ agentId: snapshot.id });
@@ -88,6 +101,7 @@ describe("ProviderHistoryCompatibilityService", () => {
       expect(loaded.id).toBe(snapshot.id);
       expect(manager.getTimeline(snapshot.id)).toEqual([{ type: "assistant_message", text: "timeline test" }]);
     } finally {
+      await database.close();
       rmSync(workspaceRoot, { recursive: true, force: true });
     }
   });
@@ -149,9 +163,6 @@ describe("ProviderHistoryCompatibilityService", () => {
       resumeAgentFromPersistence: vi.fn(async () => deferred.promise),
       createAgent: vi.fn(),
       reloadAgentSession: vi.fn(),
-      hydrateTimelineFromProvider: vi.fn(async () => {
-        currentAgent = snapshot;
-      }),
     };
     const logger = {
       child: () => logger,
@@ -174,20 +185,15 @@ describe("ProviderHistoryCompatibilityService", () => {
     expect(secondResult).toEqual(snapshot);
     expect(agentStorage.get).toHaveBeenCalledTimes(1);
     expect(agentManager.resumeAgentFromPersistence).toHaveBeenCalledTimes(1);
-    expect(agentManager.hydrateTimelineFromProvider).toHaveBeenCalledTimes(1);
   });
 
-  test("resumeAgent delegates to manager resume then compatibility hydrate", async () => {
+  test("resumeAgent delegates to manager resume", async () => {
     const snapshot = createCompatibilitySnapshot({ id: "agent-compat-resume" });
-    let currentAgent: any = null;
     const agentManager = {
-      getAgent: vi.fn(() => currentAgent),
+      getAgent: vi.fn(() => null),
       resumeAgentFromPersistence: vi.fn(async () => snapshot),
       createAgent: vi.fn(),
       reloadAgentSession: vi.fn(),
-      hydrateTimelineFromProvider: vi.fn(async () => {
-        currentAgent = snapshot;
-      }),
     };
     const logger = {
       child: () => logger,
@@ -221,11 +227,10 @@ describe("ProviderHistoryCompatibilityService", () => {
         model: "gpt-5.4",
       },
     );
-    expect(agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith("agent-compat-resume");
     expect(result).toEqual(snapshot);
   });
 
-  test("refreshAgent reloads loaded persisted agents through the compatibility hydrate path", async () => {
+  test("refreshAgent reloads loaded persisted agents", async () => {
     const existing = createCompatibilitySnapshot({ id: "agent-compat-refresh-loaded" });
     const reloaded = createCompatibilitySnapshot({ id: "agent-compat-refresh-loaded" });
     let currentAgent: any = existing;
@@ -237,7 +242,6 @@ describe("ProviderHistoryCompatibilityService", () => {
         currentAgent = reloaded;
         return reloaded;
       }),
-      hydrateTimelineFromProvider: vi.fn(async () => undefined),
     };
     const logger = {
       child: () => logger,
@@ -255,13 +259,10 @@ describe("ProviderHistoryCompatibilityService", () => {
     const result = await service.refreshAgent({ agentId: "agent-compat-refresh-loaded" });
 
     expect(agentManager.reloadAgentSession).toHaveBeenCalledWith("agent-compat-refresh-loaded");
-    expect(agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith(
-      "agent-compat-refresh-loaded",
-    );
     expect(result).toEqual(reloaded);
   });
 
-  test("refreshAgent rehydrates loaded non-persisted agents without reloading", async () => {
+  test("refreshAgent keeps loaded non-persisted agents without reloading", async () => {
     const existing = createCompatibilitySnapshot({
       id: "agent-compat-refresh-live",
       persistence: null,
@@ -271,7 +272,6 @@ describe("ProviderHistoryCompatibilityService", () => {
       resumeAgentFromPersistence: vi.fn(),
       createAgent: vi.fn(),
       reloadAgentSession: vi.fn(),
-      hydrateTimelineFromProvider: vi.fn(async () => undefined),
     };
     const logger = {
       child: () => logger,
@@ -289,15 +289,11 @@ describe("ProviderHistoryCompatibilityService", () => {
     const result = await service.refreshAgent({ agentId: "agent-compat-refresh-live" });
 
     expect(agentManager.reloadAgentSession).not.toHaveBeenCalled();
-    expect(agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith(
-      "agent-compat-refresh-live",
-    );
     expect(result).toEqual(existing);
   });
 
-  test("refreshAgent resumes unloaded persisted agents through the compatibility hydrate path", async () => {
+  test("refreshAgent resumes unloaded persisted agents", async () => {
     const snapshot = createCompatibilitySnapshot({ id: "agent-compat-refresh-cold" });
-    let currentAgent: any = null;
     const record = createStoredAgentRecord({
       id: "agent-compat-refresh-cold",
       cwd: "/tmp/refresh-cold",
@@ -307,13 +303,10 @@ describe("ProviderHistoryCompatibilityService", () => {
       },
     });
     const agentManager = {
-      getAgent: vi.fn(() => currentAgent),
+      getAgent: vi.fn(() => null),
       resumeAgentFromPersistence: vi.fn(async () => snapshot),
       createAgent: vi.fn(),
       reloadAgentSession: vi.fn(),
-      hydrateTimelineFromProvider: vi.fn(async () => {
-        currentAgent = snapshot;
-      }),
     };
     const logger = {
       child: () => logger,
@@ -355,9 +348,6 @@ describe("ProviderHistoryCompatibilityService", () => {
         labels: {},
       },
     );
-    expect(agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith(
-      "agent-compat-refresh-cold",
-    );
     expect(result).toEqual(snapshot);
   });
 
@@ -368,7 +358,6 @@ describe("ProviderHistoryCompatibilityService", () => {
         resumeAgentFromPersistence: vi.fn(),
         createAgent: vi.fn(),
         reloadAgentSession: vi.fn(),
-        hydrateTimelineFromProvider: vi.fn(),
       } as any,
       agentStorage: {
         get: async () =>

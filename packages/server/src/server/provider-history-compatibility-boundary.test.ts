@@ -10,6 +10,6 @@ describe("provider history compatibility boundary", () => {
     );
 
     expect(sessionSource).not.toMatch(/hydrateTimelineFromProvider\s*\(/);
-    expect(compatibilitySource.match(/hydrateTimelineFromProvider\s*\(/g)).toHaveLength(1);
+    expect(compatibilitySource).not.toMatch(/hydrateTimelineFromProvider\s*\(/);
   });
 });

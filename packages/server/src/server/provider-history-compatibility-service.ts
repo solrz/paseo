@@ -18,7 +18,6 @@ export type ProviderHistoryCompatibilityServiceOptions = {
     AgentManager,
     | "createAgent"
     | "getAgent"
-    | "hydrateTimelineFromProvider"
     | "reloadAgentSession"
     | "resumeAgentFromPersistence"
   >;
@@ -26,8 +25,8 @@ export type ProviderHistoryCompatibilityServiceOptions = {
   logger: pino.Logger;
 };
 
-// Compatibility-only bridge for runtime paths that still need provider history
-// replay during cold load, explicit resume, or refresh.
+// Compatibility-only bridge for runtime paths that still need coordinated cold
+// load, explicit resume, or refresh behavior.
 export class ProviderHistoryCompatibilityService {
   private readonly agentManager: ProviderHistoryCompatibilityServiceOptions["agentManager"];
   private readonly agentStorage: ProviderHistoryCompatibilityServiceOptions["agentStorage"];
@@ -67,23 +66,18 @@ export class ProviderHistoryCompatibilityService {
     handle: AgentPersistenceHandle;
     overrides?: Partial<AgentSessionConfig>;
   }): Promise<ManagedAgent> {
-    const snapshot = await this.agentManager.resumeAgentFromPersistence(
+    return this.agentManager.resumeAgentFromPersistence(
       options.handle,
       options.overrides,
     );
-    return this.hydrateCompatibilityTimeline({ agentId: snapshot.id, fallbackSnapshot: snapshot });
   }
 
   async refreshAgent(options: { agentId: string }): Promise<ManagedAgent> {
     const existing = this.agentManager.getAgent(options.agentId);
     if (existing) {
-      const snapshot = existing.persistence
+      return existing.persistence
         ? await this.agentManager.reloadAgentSession(options.agentId)
         : existing;
-      return this.hydrateCompatibilityTimeline({
-        agentId: options.agentId,
-        fallbackSnapshot: snapshot,
-      });
     }
 
     const record = await this.agentStorage.get(options.agentId);
@@ -96,16 +90,12 @@ export class ProviderHistoryCompatibilityService {
       throw new Error(`Agent ${options.agentId} cannot be refreshed because it lacks persistence`);
     }
 
-    const snapshot = await this.agentManager.resumeAgentFromPersistence(
+    return this.agentManager.resumeAgentFromPersistence(
       handle,
       buildConfigOverrides(record),
       options.agentId,
       extractTimestamps(record),
     );
-    return this.hydrateCompatibilityTimeline({
-      agentId: options.agentId,
-      fallbackSnapshot: snapshot,
-    });
   }
 
   private async loadStoredAgent(options: { agentId: string }): Promise<ManagedAgent> {
@@ -137,17 +127,6 @@ export class ProviderHistoryCompatibilityService {
       );
     }
 
-    return this.hydrateCompatibilityTimeline({
-      agentId: options.agentId,
-      fallbackSnapshot: snapshot,
-    });
-  }
-
-  private async hydrateCompatibilityTimeline(options: {
-    agentId: string;
-    fallbackSnapshot: ManagedAgent;
-  }): Promise<ManagedAgent> {
-    await this.agentManager.hydrateTimelineFromProvider(options.agentId);
-    return this.agentManager.getAgent(options.agentId) ?? options.fallbackSnapshot;
+    return this.agentManager.getAgent(options.agentId) ?? snapshot;
   }
 }

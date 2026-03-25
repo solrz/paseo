@@ -525,8 +525,10 @@ export class AgentManager {
     });
   }
 
-  // Reconstruct an agent from provider persistence. Callers should explicitly
-  // hydrate timeline history after resume.
+  // Reconstruct an agent from provider persistence. When a durable timeline
+  // store is configured, committed history is seeded from the durable store.
+  // Tests without a durable timeline store can still call
+  // hydrateTimelineFromProvider() for backward compatibility.
   async resumeAgentFromPersistence(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
@@ -660,7 +662,6 @@ export class AgentManager {
     };
     await session.close();
     this.timelineStore.delete(agentId);
-    this.enqueueDurableTimelineDelete(agentId);
     this.emitState(closedAgent);
     this.logger.trace({ agentId }, "closeAgent: completed");
   }
@@ -1398,7 +1399,17 @@ export class AgentManager {
 
   async hydrateTimelineFromProvider(agentId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
+    if (this.durableTimelineStore) {
+      return;
+    }
     await this.hydrateTimeline(agent);
+  }
+
+  async deleteCommittedTimeline(agentId: string): Promise<void> {
+    if (!this.durableTimelineStore) {
+      return;
+    }
+    await this.durableTimelineStore.deleteAgent(agentId);
   }
 
   getLastAssistantMessage(agentId: string): string | null {
@@ -1606,7 +1617,7 @@ export class AgentManager {
     const initialPersistedTitle = await this.resolveInitialPersistedTitle(resolvedAgentId, config);
 
     const now = new Date();
-    const timelineSeed: SeedAgentTimelineOptions | null =
+    const explicitTimelineSeed: SeedAgentTimelineOptions | null =
       options?.timeline?.length ||
       options?.timelineRows?.length ||
       options?.timelineNextSeq !== undefined
@@ -1617,6 +1628,14 @@ export class AgentManager {
             timestamp: (options?.updatedAt ?? options?.createdAt ?? now).toISOString(),
           }
         : null;
+    const shouldSeedFromDurable =
+      !explicitTimelineSeed &&
+      !this.timelineStore.has(resolvedAgentId) &&
+      this.durableTimelineStore !== undefined;
+    const durableTimelineSeed = shouldSeedFromDurable
+      ? await this.loadCommittedTimelineSeed(resolvedAgentId, now)
+      : null;
+    const timelineSeed = explicitTimelineSeed ?? durableTimelineSeed;
     if (timelineSeed || !this.timelineStore.has(resolvedAgentId)) {
       this.timelineStore.initialize(resolvedAgentId, timelineSeed ?? { timestamp: now.toISOString() });
     }
@@ -1644,7 +1663,7 @@ export class AgentManager {
       unsubscribeSession: null,
       provisionalAssistantText: options?.provisionalAssistantText ?? null,
       persistence: attachPersistenceCwd(session.describePersistence(), config.cwd),
-      historyPrimed: options?.historyPrimed ?? false,
+      historyPrimed: options?.historyPrimed ?? shouldSeedFromDurable,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
       lastError: options?.lastError,
@@ -1677,6 +1696,29 @@ export class AgentManager {
     this.emitState(managed, { persist: false });
     this.subscribeToSession(managed);
     return { ...managed };
+  }
+
+  private async loadCommittedTimelineSeed(
+    agentId: string,
+    now: Date,
+  ): Promise<SeedAgentTimelineOptions> {
+    if (!this.durableTimelineStore) {
+      return { timestamp: now.toISOString() };
+    }
+
+    const rows = await this.durableTimelineStore.getCommittedRows(agentId);
+    if (rows.length === 0) {
+      return {
+        nextSeq: 1,
+        timestamp: now.toISOString(),
+      };
+    }
+
+    return {
+      rows,
+      nextSeq: rows[rows.length - 1]!.seq + 1,
+      timestamp: rows[rows.length - 1]!.timestamp,
+    };
   }
 
   private subscribeToSession(agent: ActiveManagedAgent): void {
@@ -2307,16 +2349,6 @@ export class AgentManager {
         { err, agentId, rowCount: rows.length },
         "Failed to seed durable timeline store",
       );
-    });
-    this.trackBackgroundTask(task);
-  }
-
-  private enqueueDurableTimelineDelete(agentId: string): void {
-    if (!this.durableTimelineStore) {
-      return;
-    }
-    const task = this.durableTimelineStore.deleteAgent(agentId).catch((err) => {
-      this.logger.error({ err, agentId }, "Failed to delete durable timeline rows");
     });
     this.trackBackgroundTask(task);
   }
