@@ -49,6 +49,7 @@ import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agen
 import { resolveProjectPlacement } from "@/utils/project-placement";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import type { AttachmentMetadata } from "@/attachments/types";
+import { reconcilePreviousAgentStatuses } from "@/contexts/session-status-tracking";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -295,15 +296,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   }, []);
 
   useEffect(() => {
-    if (!sessionAgents) {
-      previousAgentStatusRef.current.clear();
-      return;
-    }
-    const nextStatuses = new Map<string, AgentLifecycleStatus>();
-    for (const nextAgent of sessionAgents.values()) {
-      nextStatuses.set(nextAgent.id, nextAgent.status);
-    }
-    previousAgentStatusRef.current = nextStatuses;
+    previousAgentStatusRef.current = reconcilePreviousAgentStatuses(
+      previousAgentStatusRef.current,
+      sessionAgents,
+    );
   }, [sessionAgents]);
 
   const hydrateWorkspaces = useCallback(
