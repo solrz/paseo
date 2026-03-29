@@ -604,7 +604,13 @@ function normalizeQueryParts(query: string, homeRoot: string): QueryParts | null
     return null;
   }
 
+  // Only treat the query as a literal path when the user explicitly roots it
+  // with ~, ~/, ./, or an absolute path. Bare queries like "faro/main" are
+  // search terms, not paths.
+  let isRooted = false;
+
   if (normalized.startsWith("~")) {
+    isRooted = true;
     normalized = normalized.slice(1);
     if (normalized.startsWith("/")) {
       normalized = normalized.slice(1);
@@ -612,6 +618,7 @@ function normalizeQueryParts(query: string, homeRoot: string): QueryParts | null
   }
 
   if (path.isAbsolute(normalized)) {
+    isRooted = true;
     const absolute = path.resolve(normalized);
     if (!isPathInsideRoot(homeRoot, absolute)) {
       return null;
@@ -619,6 +626,9 @@ function normalizeQueryParts(query: string, homeRoot: string): QueryParts | null
     normalized = normalizeRelativePath(homeRoot, absolute);
   }
 
+  if (normalized.startsWith("./")) {
+    isRooted = true;
+  }
   normalized = normalized.replace(/^\.\/+/, "").replace(/\/{2,}/g, "/");
   if (!normalized) {
     // Treat "~" and "~/" as a request to browse the home root.
@@ -632,13 +642,21 @@ function normalizeQueryParts(query: string, homeRoot: string): QueryParts | null
     return null;
   }
 
-  const isPathQuery = normalized.includes("/");
+  const isPathQuery = isRooted && normalized.includes("/");
+  if (!isPathQuery) {
+    return {
+      isPathQuery: false,
+      parentPart: "",
+      searchTerm: normalized,
+    };
+  }
+
   const slashIndex = normalized.lastIndexOf("/");
-  const parentPart = slashIndex >= 0 ? normalized.slice(0, slashIndex) : "";
-  const searchTerm = slashIndex >= 0 ? normalized.slice(slashIndex + 1) : normalized;
+  const parentPart = normalized.slice(0, slashIndex);
+  const searchTerm = normalized.slice(slashIndex + 1);
 
   return {
-    isPathQuery,
+    isPathQuery: true,
     parentPart,
     searchTerm,
   };
