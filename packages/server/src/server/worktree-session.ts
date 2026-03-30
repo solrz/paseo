@@ -14,7 +14,6 @@ import {
   type WorkspaceDescriptorPayload,
 } from "./messages.js";
 import type {
-  PersistedProjectRecord,
   PersistedWorkspaceRecord,
   ProjectRegistry,
   WorkspaceRegistry,
@@ -77,26 +76,15 @@ type ArchivePaseoWorktreeDependencies = {
 };
 
 type RegisterPendingWorktreeWorkspaceDependencies = {
-  buildPersistedProjectRecord: (input: {
-    workspaceId: string;
-    placement: ProjectPlacementPayload;
-    createdAt: string;
-    updatedAt: string;
-  }) => PersistedProjectRecord;
-  buildPersistedWorkspaceRecord: (input: {
-    workspaceId: string;
-    placement: ProjectPlacementPayload;
-    createdAt: string;
-    updatedAt: string;
-  }) => PersistedWorkspaceRecord;
   buildProjectPlacement: (cwd: string) => Promise<ProjectPlacementPayload>;
-  projectRegistry: Pick<ProjectRegistry, "get" | "upsert">;
+  findWorkspaceByDirectory: (directory: string) => Promise<PersistedWorkspaceRecord | null>;
+  projectRegistry: Pick<ProjectRegistry, "get" | "upsert" | "insert" | "archive">;
   syncWorkspaceGitWatchTarget: (
     cwd: string,
     options: { isGit: boolean },
   ) => Promise<void>;
-  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "upsert">;
-  archiveProjectRecordIfEmpty: (projectId: string, archivedAt: string) => Promise<void>;
+  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "upsert" | "insert" | "list">;
+  archiveProjectRecordIfEmpty: (projectId: number, archivedAt: string) => Promise<void>;
 };
 
 type CreatePaseoWorktreeInBackgroundDependencies = {
@@ -509,50 +497,50 @@ export async function registerPendingWorktreeWorkspace(
     branchName: string;
   },
 ): Promise<PersistedWorkspaceRecord> {
-  const workspaceId = normalizePersistedWorkspaceId(options.worktreePath);
+  const workspaceDirectory = normalizePersistedWorkspaceId(options.worktreePath);
   const basePlacement = await dependencies.buildProjectPlacement(options.repoRoot);
-  const placement: ProjectPlacementPayload = {
-    ...basePlacement,
-    checkout: {
-      cwd: workspaceId,
-      isGit: true,
-      currentBranch: options.branchName,
-      remoteUrl: basePlacement.checkout.remoteUrl,
-      isPaseoOwnedWorktree: true,
-      mainRepoRoot: options.repoRoot,
-    },
-  };
+  const projectId = Number(basePlacement.projectKey);
+  if (!Number.isInteger(projectId)) {
+    throw new Error(`Invalid project id for repo root ${options.repoRoot}`);
+  }
+
   const now = new Date().toISOString();
-  const existingWorkspace = await dependencies.workspaceRegistry.get(workspaceId);
-  const existingProject = await dependencies.projectRegistry.get(placement.projectKey);
-  const nextProjectRecord = dependencies.buildPersistedProjectRecord({
-    workspaceId,
-    placement,
-    createdAt: existingProject?.createdAt ?? now,
-    updatedAt: now,
-  });
-  const nextWorkspaceRecord = dependencies.buildPersistedWorkspaceRecord({
-    workspaceId,
-    placement,
-    createdAt: existingWorkspace?.createdAt ?? now,
-    updatedAt: now,
-  });
+  const existingWorkspace = await dependencies.findWorkspaceByDirectory(workspaceDirectory);
+  if (!existingWorkspace) {
+    const workspaceId = await dependencies.workspaceRegistry.insert({
+      projectId,
+      directory: workspaceDirectory,
+      displayName: options.branchName,
+      kind: "worktree",
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+    });
+    const workspace = await dependencies.workspaceRegistry.get(workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace not found after insert: ${workspaceId}`);
+    }
+    await dependencies.syncWorkspaceGitWatchTarget(workspaceDirectory, { isGit: true });
+    return workspace;
+  }
 
-  await dependencies.projectRegistry.upsert(nextProjectRecord);
-  await dependencies.workspaceRegistry.upsert(nextWorkspaceRecord);
-  await dependencies.syncWorkspaceGitWatchTarget(workspaceId, {
-    isGit: placement.checkout.isGit,
+  await dependencies.workspaceRegistry.upsert({
+    id: existingWorkspace.id,
+    projectId,
+    directory: workspaceDirectory,
+    displayName: options.branchName,
+    kind: "worktree",
+    createdAt: existingWorkspace.createdAt,
+    updatedAt: now,
+    archivedAt: null,
   });
+  await dependencies.syncWorkspaceGitWatchTarget(workspaceDirectory, { isGit: true });
 
-  if (
-    existingWorkspace &&
-    !existingWorkspace.archivedAt &&
-    existingWorkspace.projectId !== nextWorkspaceRecord.projectId
-  ) {
+  if (!existingWorkspace.archivedAt && existingWorkspace.projectId !== projectId) {
     await dependencies.archiveProjectRecordIfEmpty(existingWorkspace.projectId, now);
   }
 
-  return nextWorkspaceRecord;
+  return (await dependencies.workspaceRegistry.get(existingWorkspace.id))!;
 }
 
 export async function handleCreatePaseoWorktreeRequest(

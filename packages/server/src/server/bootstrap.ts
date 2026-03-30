@@ -206,18 +206,7 @@ export async function createPaseoDaemon(
   const bootstrapStart = performance.now();
   const elapsed = () => `${(performance.now() - bootstrapStart).toFixed(0)}ms`;
   const daemonVersion = resolveDaemonVersion(import.meta.url);
-  const pidLockMode = config.pidLock?.mode ?? "self";
-  const pidLockOwnerPid = config.pidLock?.ownerPid;
-  const ownsPidLock = pidLockMode === "self";
   let database: PaseoDatabaseHandle | null = null;
-
-  // Acquire PID lock before expensive bootstrap work so duplicate starts fail immediately.
-  if (ownsPidLock) {
-    await acquirePidLock(config.paseoHome, config.listen, {
-      ownerPid: pidLockOwnerPid,
-    });
-    logger.info({ elapsed: elapsed() }, "PID lock acquired");
-  }
 
   try {
     const serverId = getOrCreateServerId(config.paseoHome, { logger });
@@ -796,11 +785,6 @@ export async function createPaseoDaemon(
     };
   } catch (err) {
     await database?.close().catch(() => undefined);
-    if (ownsPidLock) {
-      await releasePidLock(config.paseoHome, {
-        ownerPid: pidLockOwnerPid,
-      }).catch(() => undefined);
-    }
     throw err;
   }
 }

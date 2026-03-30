@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import { watch, type FSWatcher } from "node:fs";
-import { readFile, stat } from "fs/promises";
+import { readFile } from "fs/promises";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { join, resolve, sep } from "path";
@@ -106,7 +106,6 @@ import type {
   ProjectRegistry,
   WorkspaceRegistry,
 } from "./workspace-registry.js";
-import { createPersistedWorkspaceRecord } from "./workspace-registry.js";
 import { AgentLoadingService } from "./agent-loading-service.js";
 import {
   buildVoiceAgentMcpServerConfig,
@@ -166,7 +165,6 @@ import {
   handlePaseoWorktreeArchiveRequest as handleWorktreeArchiveRequest,
   handlePaseoWorktreeListRequest as handleWorktreeListRequest,
   killTerminalsUnderPath as killWorktreeTerminalsUnderPath,
-  registerPendingWorktreeWorkspace as registerPendingWorktreeWorkspaceSession,
 } from "./worktree-session.js";
 
 const execAsync = promisify(exec);
@@ -4078,7 +4076,12 @@ export class Session {
         paseoHome: this.paseoHome,
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
-        archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+        archiveWorkspaceRecord: async (workspaceDirectory) => {
+          const workspace = await this.findWorkspaceByDirectory(workspaceDirectory);
+          if (workspace) {
+            await this.archiveWorkspaceRecord(workspace.id);
+          }
+        },
         emit: (message) => this.emit(message),
         emitWorkspaceUpdatesForCwds: (cwds) => this.emitWorkspaceUpdatesForCwds(cwds),
         isPathWithinRoot: (rootPath, candidatePath) =>
@@ -5113,25 +5116,68 @@ export class Session {
     return (await this.workspaceRegistry.get(workspaceId))!;
   }
 
-  private async registerWorktreeWorkspaceRecord(options: {
+  private async registerPendingWorktreeWorkspace(options: {
     repoRoot: string;
     worktreePath: string;
     branchName: string;
   }): Promise<PersistedWorkspaceRecord> {
-    return registerPendingWorktreeWorkspaceSession(
-      {
-        buildPersistedProjectRecord: (input) => this.buildPersistedProjectRecord(input),
-        buildPersistedWorkspaceRecord: (input) => this.buildPersistedWorkspaceRecord(input),
-        buildProjectPlacement: (cwd) => this.buildProjectPlacement(cwd),
-        projectRegistry: this.projectRegistry,
-        syncWorkspaceGitWatchTarget: (cwd, syncOptions) =>
-          this.syncWorkspaceGitWatchTarget(cwd, syncOptions),
-        workspaceRegistry: this.workspaceRegistry,
-        archiveProjectRecordIfEmpty: (projectId, archivedAt) =>
-          this.archiveProjectRecordIfEmpty(projectId, archivedAt),
-      },
-      options,
-    );
+    await this.findOrCreateWorkspaceForDirectory(options.repoRoot);
+    const workspaceDirectory = normalizePersistedWorkspaceId(options.worktreePath);
+    const basePlacement = await this.buildProjectPlacementForCwd(options.repoRoot);
+    if (!basePlacement) {
+      throw new Error(`Workspace not found for repo root ${options.repoRoot}`);
+    }
+
+    const projectId = Number(basePlacement.projectKey);
+    if (!Number.isInteger(projectId)) {
+      throw new Error(`Invalid project id for repo root ${options.repoRoot}`);
+    }
+
+    const now = new Date().toISOString();
+    const existingWorkspace = await this.findWorkspaceByDirectory(workspaceDirectory);
+    if (!existingWorkspace) {
+      const workspaceId = await this.workspaceRegistry.insert({
+        projectId,
+        directory: workspaceDirectory,
+        displayName: options.branchName,
+        kind: "worktree",
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+      });
+      const workspace = await this.workspaceRegistry.get(workspaceId);
+      if (!workspace) {
+        throw new Error(`Workspace not found after insert: ${workspaceId}`);
+      }
+      await this.syncWorkspaceGitWatchTarget(workspace.directory, { isGit: true });
+      return workspace;
+    }
+
+    await this.workspaceRegistry.upsert({
+      id: existingWorkspace.id,
+      projectId,
+      directory: workspaceDirectory,
+      displayName: options.branchName,
+      kind: "worktree",
+      createdAt: existingWorkspace.createdAt,
+      updatedAt: now,
+      archivedAt: null,
+    });
+    await this.syncWorkspaceGitWatchTarget(workspaceDirectory, { isGit: true });
+
+    if (!existingWorkspace.archivedAt && existingWorkspace.projectId !== projectId) {
+      const siblingWorkspaces = (await this.workspaceRegistry.list()).filter(
+        (workspace) =>
+          workspace.projectId === existingWorkspace.projectId &&
+          workspace.id !== existingWorkspace.id &&
+          !workspace.archivedAt,
+      );
+      if (siblingWorkspaces.length === 0) {
+        await this.projectRegistry.archive(existingWorkspace.projectId, now);
+      }
+    }
+
+    return (await this.workspaceRegistry.get(existingWorkspace.id))!;
   }
 
   private async archiveWorkspaceRecord(workspaceId: number, archivedAt?: string): Promise<void> {
