@@ -5165,20 +5165,35 @@ export class Session {
     const timestamp = new Date().toISOString();
     const directoryName = normalizedCwd.split(/[\\/]/).filter(Boolean).at(-1) ?? normalizedCwd;
     const gitMetadata = detectWorkspaceGitMetadata(normalizedCwd, directoryName);
-    const projectId = await this.projectRegistry.insert({
-      directory: normalizedCwd,
-      displayName: gitMetadata.projectDisplayName,
-      kind: gitMetadata.projectKind,
-      gitRemote: gitMetadata.gitRemote,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      archivedAt: null,
-    });
+
+    let projectId: number | null = null;
+    if (gitMetadata.gitRemote) {
+      const existingProjects = await this.projectRegistry.list();
+      const matchingProject = existingProjects.find(
+        (p) => p.gitRemote === gitMetadata.gitRemote && !p.archivedAt,
+      );
+      if (matchingProject) {
+        projectId = matchingProject.id;
+      }
+    }
+
+    if (projectId === null) {
+      projectId = await this.projectRegistry.insert({
+        directory: normalizedCwd,
+        displayName: gitMetadata.projectDisplayName,
+        kind: gitMetadata.projectKind,
+        gitRemote: gitMetadata.gitRemote,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        archivedAt: null,
+      });
+    }
+
     const workspaceId = await this.workspaceRegistry.insert({
       projectId,
       directory: normalizedCwd,
       displayName: gitMetadata.workspaceDisplayName,
-      kind: "checkout",
+      kind: gitMetadata.isWorktree ? "worktree" : "checkout",
       createdAt: timestamp,
       updatedAt: timestamp,
       archivedAt: null,

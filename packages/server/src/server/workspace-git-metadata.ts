@@ -6,6 +6,7 @@ export type WorkspaceGitMetadata = {
   projectDisplayName: string;
   workspaceDisplayName: string;
   gitRemote: string | null;
+  isWorktree: boolean;
 };
 
 export function readGitCommand(cwd: string, command: string): string | null {
@@ -66,17 +67,21 @@ export function detectWorkspaceGitMetadata(
       projectDisplayName: directoryName,
       workspaceDisplayName: directoryName,
       gitRemote: null,
+      isWorktree: false,
     };
   }
 
   const gitRemote = readGitCommand(cwd, "git config --get remote.origin.url");
   const githubRepo = gitRemote ? parseGitHubRepoFromRemote(gitRemote) : null;
   const branchName = readGitCommand(cwd, "git symbolic-ref --short HEAD");
+  const gitCommonDir = readGitCommand(cwd, "git rev-parse --git-common-dir");
+  const isWorktree = gitCommonDir !== null && gitDir !== gitCommonDir;
 
   return {
     projectKind: "git",
     projectDisplayName: githubRepo ?? directoryName,
     workspaceDisplayName: branchName ?? directoryName,
     gitRemote,
+    isWorktree,
   };
 }
