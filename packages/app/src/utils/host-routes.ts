@@ -163,7 +163,13 @@ export function encodeWorkspaceIdForPathSegment(workspaceId: string): string {
   if (!normalized) {
     return "";
   }
-  return toBase64UrlNoPad(normalizeWorkspaceId(normalized));
+  // Numeric string IDs are URL-safe and don't need encoding.
+  // Legacy path-based IDs still get base64-encoded for safety.
+  const id = normalizeWorkspaceId(normalized);
+  if (isPathLikeWorkspaceIdentity(id)) {
+    return toBase64UrlNoPad(id);
+  }
+  return encodeURIComponent(id);
 }
 
 export function decodeWorkspaceIdFromPathSegment(workspaceIdSegment: string): string | null {
@@ -181,6 +187,12 @@ export function decodeWorkspaceIdFromPathSegment(workspaceIdSegment: string): st
   // Legacy: if it already looks like a path after decoding, keep it.
   if (decoded.includes("/") || decoded.includes("\\")) {
     return normalizeWorkspaceId(decoded);
+  }
+
+  // If the segment looks like a plain numeric ID, return it directly.
+  // Do NOT attempt base64 decode on short alphanumeric strings.
+  if (/^\d+$/.test(decoded)) {
+    return decoded;
   }
 
   const base64Decoded = tryDecodeBase64UrlNoPadUtf8(decoded);

@@ -24,7 +24,12 @@ describe("parseHostAgentRouteFromPathname", () => {
 });
 
 describe("workspace route parsing", () => {
-  it("encodes workspace IDs as base64url (no padding)", () => {
+  it("encodes numeric workspace IDs without base64", () => {
+    expect(encodeWorkspaceIdForPathSegment("164")).toBe("164");
+    expect(decodeWorkspaceIdFromPathSegment("164")).toBe("164");
+  });
+
+  it("encodes path-based workspace IDs as base64url (legacy)", () => {
     expect(encodeWorkspaceIdForPathSegment("/tmp/repo")).toBe("L3RtcC9yZXBv");
     expect(decodeWorkspaceIdFromPathSegment("L3RtcC9yZXBv")).toBe("/tmp/repo");
   });
@@ -41,7 +46,14 @@ describe("workspace route parsing", () => {
     expect(decodeFilePathFromPathSegment(encoded)).toBe("src/index.ts");
   });
 
-  it("parses workspace route", () => {
+  it("parses workspace route with numeric ID", () => {
+    expect(parseHostWorkspaceRouteFromPathname("/h/local/workspace/164")).toEqual({
+      serverId: "local",
+      workspaceId: "164",
+    });
+  });
+
+  it("parses workspace route with legacy base64 path", () => {
     expect(parseHostWorkspaceRouteFromPathname("/h/local/workspace/L3RtcC9yZXBv")).toEqual({
       serverId: "local",
       workspaceId: "/tmp/repo",
@@ -54,7 +66,11 @@ describe("workspace route parsing", () => {
     ).toBeNull();
   });
 
-  it("builds base64url workspace routes", () => {
+  it("builds numeric workspace routes without base64", () => {
+    expect(buildHostWorkspaceRoute("local", "164")).toBe("/h/local/workspace/164");
+  });
+
+  it("builds base64url workspace routes for legacy paths", () => {
     expect(buildHostWorkspaceRoute("local", "/tmp/repo")).toBe("/h/local/workspace/L3RtcC9yZXBv");
   });
 
@@ -65,7 +81,7 @@ describe("workspace route parsing", () => {
   it("parses workspace open intent from pathname query", () => {
     expect(
       parseHostWorkspaceOpenIntentFromPathname(
-        "/h/local/workspace/L3RtcC9yZXBv?open=agent%3Aagent-1",
+        "/h/local/workspace/164?open=agent%3Aagent-1",
       ),
     ).toEqual({
       kind: "agent",
@@ -90,14 +106,23 @@ describe("workspace route parsing", () => {
   });
 
   it("uses the plain workspace route when workspace context is provided", () => {
-    expect(buildHostAgentDetailRoute("local", "agent-1", "/tmp/repo")).toBe(
-      "/h/local/workspace/L3RtcC9yZXBv?open=agent%3Aagent-1",
+    expect(buildHostAgentDetailRoute("local", "agent-1", "164")).toBe(
+      "/h/local/workspace/164?open=agent%3Aagent-1",
     );
   });
 
   it("builds workspace routes with a one-shot open intent", () => {
-    expect(buildHostWorkspaceOpenRoute("local", "/tmp/repo", "draft:new")).toBe(
-      "/h/local/workspace/L3RtcC9yZXBv?open=draft%3Anew",
+    expect(buildHostWorkspaceOpenRoute("local", "164", "draft:new")).toBe(
+      "/h/local/workspace/164?open=draft%3Anew",
     );
+  });
+
+  it("round-trips numeric IDs through encode/decode", () => {
+    const ids = ["1", "40", "164", "9999"];
+    for (const id of ids) {
+      const encoded = encodeWorkspaceIdForPathSegment(id);
+      const decoded = decodeWorkspaceIdFromPathSegment(encoded);
+      expect(decoded).toBe(id);
+    }
   });
 });
