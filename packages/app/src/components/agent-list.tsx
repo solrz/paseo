@@ -261,9 +261,23 @@ export function AgentList({
     [isActionSheetVisible, onAgentSelect],
   );
 
-  const handleAgentLongPress = useCallback((agent: AggregatedAgent) => {
-    setActionAgent(agent);
-  }, []);
+  const handleAgentLongPress = useCallback(
+    (agent: AggregatedAgent) => {
+      const isRunning = agent.status === "running" || agent.status === "initializing";
+      if (isRunning) {
+        setActionAgent(agent);
+        return;
+      }
+
+      const client = useSessionStore.getState().sessions[agent.serverId]?.client ?? null;
+      if (!client) {
+        setActionAgent(agent);
+        return;
+      }
+      void client.archiveAgent(agent.id);
+    },
+    [],
+  );
 
   const handleCloseActionSheet = useCallback(() => {
     setActionAgent(null);
@@ -365,7 +379,9 @@ export function AgentList({
           >
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>
-              {isActionDaemonUnavailable ? "Host offline" : "Archive this session?"}
+              {isActionDaemonUnavailable
+                ? "Host offline"
+                : "This agent is still running. Archiving it will stop the agent."}
             </Text>
             <View style={styles.sheetButtonRow}>
               <Pressable

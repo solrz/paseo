@@ -1284,15 +1284,21 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
           return;
         }
 
-        const confirmed = await confirmDialog({
-          title: "Archive agent?",
-          message: "This closes the tab and archives the agent.",
-          confirmLabel: "Archive",
-          cancelLabel: "Cancel",
-          destructive: true,
-        });
-        if (!confirmed) {
-          return;
+        const agent =
+          useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+        const isRunning = agent?.status === "running" || agent?.status === "initializing";
+
+        if (isRunning) {
+          const confirmed = await confirmDialog({
+            title: "Archive running agent?",
+            message: "This agent is still running. Archiving it will stop the agent and close the tab.",
+            confirmLabel: "Archive",
+            cancelLabel: "Cancel",
+            destructive: true,
+          });
+          if (!confirmed) {
+            return;
+          }
         }
 
         setHoveredTabKey((current) => (current === tabId ? null : current));
