@@ -418,8 +418,19 @@ function isClaudeNoResponsePlaceholderText(value: unknown): boolean {
   return normalizeClaudeTranscriptText(value) === NO_RESPONSE_REQUESTED_PLACEHOLDER;
 }
 
+const LOCAL_COMMAND_STDOUT_PATTERN = /^\s*<local-command-stdout>[\s\S]*<\/local-command-stdout>\s*$/;
+
+function isClaudeLocalCommandStdout(value: unknown): boolean {
+  const normalized = normalizeClaudeTranscriptText(value);
+  return normalized !== null && LOCAL_COMMAND_STDOUT_PATTERN.test(normalized);
+}
+
 function isClaudeTranscriptNoiseText(value: unknown): boolean {
-  return isClaudeInterruptPlaceholderText(value) || isClaudeNoResponsePlaceholderText(value);
+  return (
+    isClaudeInterruptPlaceholderText(value) ||
+    isClaudeNoResponsePlaceholderText(value) ||
+    isClaudeLocalCommandStdout(value)
+  );
 }
 
 function collectClaudeTextContentParts(content: unknown): string[] {

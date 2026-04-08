@@ -159,6 +159,79 @@ describe("convertClaudeHistoryEntry", () => {
     expect(convertClaudeHistoryEntry(assistantNoiseEntry, mapBlocks)).toEqual([]);
   });
 
+  test("skips <local-command-stdout> messages (model switch, /context, etc.)", () => {
+    // Real entries from Claude Code JSONL history files
+    const modelSwitch = {
+      type: "user",
+      message: {
+        role: "user",
+        content:
+          "<local-command-stdout>Set model to claude-opus-4-6</local-command-stdout>",
+      },
+      userType: "external",
+    };
+
+    const modelSwitchWithAnsi = {
+      type: "user",
+      message: {
+        role: "user",
+        content:
+          '<local-command-stdout>Set model to \u001b[1mopus (claude-opus-4-6)\u001b[22m</local-command-stdout>',
+      },
+    };
+
+    const contextDump = {
+      type: "user",
+      message: {
+        role: "user",
+        content:
+          "<local-command-stdout>## Context Usage\n\n**Model:** claude-opus-4-6\n**Tokens:** 19k</local-command-stdout>",
+      },
+    };
+
+    const planMode = {
+      type: "user",
+      message: {
+        role: "user",
+        content: "<local-command-stdout>Enabled plan mode</local-command-stdout>",
+      },
+    };
+
+    const goodbye = {
+      type: "user",
+      message: {
+        role: "user",
+        content: "<local-command-stdout>Bye!</local-command-stdout>",
+      },
+    };
+
+    const empty = {
+      type: "user",
+      message: {
+        role: "user",
+        content: "<local-command-stdout></local-command-stdout>",
+      },
+    };
+
+    const mapBlocks = vi.fn().mockReturnValue([]);
+
+    expect(convertClaudeHistoryEntry(modelSwitch, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(modelSwitchWithAnsi, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(contextDump, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(planMode, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(goodbye, mapBlocks)).toEqual([]);
+    expect(convertClaudeHistoryEntry(empty, mapBlocks)).toEqual([]);
+
+    // Real user messages must NOT be filtered
+    const realMessage = {
+      type: "user",
+      message: { role: "user", content: "fix the bug in auth.ts" },
+    };
+    expect(convertClaudeHistoryEntry(realMessage, mapBlocks)).toEqual([
+      { type: "user_message", text: "fix the bug in auth.ts" },
+    ]);
+  });
+
   test("maps task notifications to synthetic tool calls", () => {
     const entry = {
       type: "system",
