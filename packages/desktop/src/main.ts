@@ -1,4 +1,5 @@
 import log from "electron-log/main";
+log.transports.console.level = "info";
 log.initialize({ spyRendererConsole: true });
 
 import { inheritLoginShellEnv } from "./login-shell-env.js";
@@ -146,24 +147,6 @@ async function createMainWindow(): Promise<void> {
   setupWindowResizeEvents(mainWindow);
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
-
-  // Renderer diagnostics — helps debug layout and loading issues
-  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-    const levelNames = ["verbose", "info", "warning", "error"];
-    log.info(`[renderer:console] [${levelNames[level] ?? level}] ${message} (${sourceId}:${line})`);
-  });
-  mainWindow.webContents.on("did-finish-load", () => {
-    log.info("[renderer] did-finish-load");
-  });
-  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
-    log.error("[renderer] did-fail-load", { errorCode, errorDescription, validatedURL });
-  });
-  mainWindow.webContents.on("render-process-gone", (_event, details) => {
-    log.error("[renderer] render-process-gone", details);
-  });
-  mainWindow.webContents.on("unresponsive", () => {
-    log.warn("[renderer] unresponsive");
-  });
 
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
