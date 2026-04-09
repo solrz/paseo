@@ -25,6 +25,7 @@ const providerPreferencesSchema = z.object({
   model: z.string().optional(),
   mode: z.string().optional(),
   thinkingByModel: z.record(z.string()).optional(),
+  featureValues: z.record(z.unknown()).optional(),
 });
 
 const formPreferencesSchema = z.object({
@@ -53,7 +54,9 @@ async function loadFormPreferences(): Promise<FormPreferences> {
 export interface UseFormPreferencesReturn {
   preferences: FormPreferences;
   isLoading: boolean;
-  updatePreferences: (updates: Partial<FormPreferences>) => Promise<void>;
+  updatePreferences: (
+    updates: Partial<FormPreferences> | ((current: FormPreferences) => FormPreferences),
+  ) => Promise<void>;
 }
 
 export function mergeProviderPreferences(args: {
@@ -71,6 +74,13 @@ export function mergeProviderPreferences(args: {
           ...existing.thinkingByModel,
           ...updates.thinkingByModel,
         };
+  const nextFeatureValues =
+    updates.featureValues === undefined
+      ? existing.featureValues
+      : {
+          ...existing.featureValues,
+          ...updates.featureValues,
+        };
 
   return {
     ...preferences,
@@ -81,6 +91,7 @@ export function mergeProviderPreferences(args: {
         ...existing,
         ...updates,
         ...(nextThinkingByModel ? { thinkingByModel: nextThinkingByModel } : {}),
+        ...(nextFeatureValues ? { featureValues: nextFeatureValues } : {}),
       },
     },
   };
@@ -133,11 +144,12 @@ export function useFormPreferences(): UseFormPreferencesReturn {
   const preferences = data ?? DEFAULT_FORM_PREFERENCES;
 
   const updatePreferences = useCallback(
-    async (updates: Partial<FormPreferences>) => {
+    async (updates: Partial<FormPreferences> | ((current: FormPreferences) => FormPreferences)) => {
       const prev =
         queryClient.getQueryData<FormPreferences>(FORM_PREFERENCES_QUERY_KEY) ??
         DEFAULT_FORM_PREFERENCES;
-      const next = { ...prev, ...updates };
+      const next =
+        typeof updates === "function" ? updates(prev) : { ...prev, ...updates };
       queryClient.setQueryData<FormPreferences>(FORM_PREFERENCES_QUERY_KEY, next);
       await AsyncStorage.setItem(FORM_PREFERENCES_STORAGE_KEY, JSON.stringify(next));
     },

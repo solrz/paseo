@@ -651,30 +651,29 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   const persistFormPreferences = useCallback(async () => {
     const resolvedModel = resolveEffectiveModel(availableModels, formState.model);
     const modelId = resolvedModel?.id ?? formState.model;
-    const nextPreferences = mergeProviderPreferences({
-      preferences: preferences ?? {},
-      provider: formState.provider,
-      updates: {
-        model: modelId || undefined,
-        mode: formState.modeId || undefined,
-        ...(modelId && formState.thinkingOptionId
-          ? {
-              thinkingByModel: {
-                [modelId]: formState.thinkingOptionId,
-              },
-            }
-          : {}),
-      } satisfies Partial<ProviderPreferences>,
-    });
-
-    await updatePreferences(nextPreferences);
+    await updatePreferences((current) =>
+      mergeProviderPreferences({
+        preferences: current,
+        provider: formState.provider,
+        updates: {
+          model: modelId || undefined,
+          mode: formState.modeId || undefined,
+          ...(modelId && formState.thinkingOptionId
+            ? {
+                thinkingByModel: {
+                  [modelId]: formState.thinkingOptionId,
+                },
+              }
+            : {}),
+        } satisfies Partial<ProviderPreferences>,
+      }),
+    );
   }, [
     availableModels,
     formState.model,
     formState.modeId,
     formState.provider,
     formState.thinkingOptionId,
-    preferences?.providerPreferences,
     updatePreferences,
   ]);
 
