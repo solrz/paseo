@@ -3095,11 +3095,7 @@ export class Session {
       const existing = this.agentManager.getAgent(agentId);
       if (existing) {
         await this.interruptAgentIfRunning(agentId);
-        if (existing.persistence) {
-          snapshot = await this.agentManager.reloadAgentSession(agentId);
-        } else {
-          snapshot = existing;
-        }
+        snapshot = await this.agentManager.reloadAgentSession(agentId);
       } else {
         const record = await this.agentStorage.get(agentId);
         if (!record) {
