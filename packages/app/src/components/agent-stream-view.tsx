@@ -331,6 +331,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 timestamp={item.timestamp.getTime()}
                 onInlinePathPress={handleInlinePathPress}
                 workspaceRoot={workspaceRoot}
+                serverId={serverId}
+                client={client}
               />
             );
           case "thought": {
