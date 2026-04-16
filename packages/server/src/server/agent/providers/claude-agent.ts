@@ -1144,6 +1144,7 @@ export class ClaudeAgentClient implements AgentClient {
       const resolvedBinary = (await findExecutable("claude")) ?? "not found";
       const available = await this.isAvailable();
       const version = await resolveClaudeVersion(this.runtimeSettings);
+      const auth = available ? await resolveClaudeAuth(this.runtimeSettings) : null;
       let modelsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
 
@@ -1164,6 +1165,7 @@ export class ClaudeAgentClient implements AgentClient {
         diagnostic: formatProviderDiagnostic("Claude Code", [
           { label: "Binary", value: resolvedBinary },
           ...(version ? [{ label: "Version", value: version }] : []),
+          ...(auth ? [{ label: "Auth", value: auth }] : []),
           { label: "Models", value: modelsValue },
           { label: "Status", value: status },
         ]),
@@ -1205,6 +1207,57 @@ async function resolveClaudeVersion(
 
     const { stdout } = await execCommand(executable, ["--version"], { timeout: 5_000 });
     return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveClaudeAuth(
+  runtimeSettings?: ProviderRuntimeSettings,
+): Promise<string | null> {
+  const command = runtimeSettings?.command;
+
+  try {
+    let stdout: string;
+    if (command?.mode === "replace") {
+      const result = await execCommand(
+        command.argv[0]!,
+        [...command.argv.slice(1), "auth", "status"],
+        { timeout: 5_000 },
+      );
+      stdout = result.stdout;
+    } else {
+      const executable = await findExecutable("claude");
+      if (!executable) {
+        return null;
+      }
+      const result = await execCommand(executable, ["auth", "status"], { timeout: 5_000 });
+      stdout = result.stdout;
+    }
+
+    const parsed: unknown = JSON.parse(stdout);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    const record = parsed as Record<string, unknown>;
+    if (record.loggedIn !== true) {
+      return "Not logged in";
+    }
+
+    const parts: string[] = [];
+    if (typeof record.authMethod === "string" && record.authMethod) {
+      parts.push(record.authMethod);
+    }
+    if (typeof record.subscriptionType === "string" && record.subscriptionType) {
+      parts.push(record.subscriptionType);
+    }
+    if (typeof record.email === "string" && record.email) {
+      parts.push(record.email);
+    } else if (typeof record.orgName === "string" && record.orgName) {
+      parts.push(record.orgName);
+    }
+
+    return parts.length > 0 ? parts.join(" · ") : "Logged in";
   } catch {
     return null;
   }
