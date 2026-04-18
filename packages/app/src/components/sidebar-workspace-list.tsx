@@ -797,17 +797,6 @@ function ProjectHeaderRow({
   const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const toast = useToast();
 
-  useKeyboardActionHandler({
-    handlerId: `worktree-new-${project.projectKey}`,
-    actions: ["worktree.new"],
-    enabled: isProjectActive && canCreateWorktree && Boolean(serverId),
-    priority: 0,
-    handle: () => {
-      handleBeginWorkspaceSetup();
-      return true;
-    },
-  });
-
   const interaction = useLongPressDragInteraction({
     drag,
     menuController,

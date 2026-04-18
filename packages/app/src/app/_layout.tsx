@@ -64,6 +64,7 @@ import { ProjectPickerModal } from "@/components/project-picker-modal";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-action";
 import { queryClient } from "@/query/query-client";
 import {
   WEB_NOTIFICATION_CLICK_EVENT,
@@ -442,6 +443,8 @@ function AppContainer({
     toggleFocusMode,
     cycleTheme,
   });
+
+  useActiveWorktreeNewAction();
 
   const containerStyle = useMemo(
     () => ({ flex: 1 as const, backgroundColor: theme.colors.surface0 }),
