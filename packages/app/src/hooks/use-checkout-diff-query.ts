@@ -23,6 +23,7 @@ interface UseCheckoutDiffQueryOptions {
   baseRef?: string;
   ignoreWhitespace?: boolean;
   enabled?: boolean;
+  subscribeWhen?: "changes-panel-open" | "enabled";
 }
 
 type CheckoutDiffQueryPayload = Omit<SubscribeCheckoutDiffResponse["payload"], "subscriptionId">;
@@ -54,13 +55,17 @@ export function useCheckoutDiffQuery({
   baseRef,
   ignoreWhitespace,
   enabled = true,
+  subscribeWhen = "changes-panel-open",
 }: UseCheckoutDiffQueryOptions) {
   const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isMobile = useIsCompactFormFactor();
-  const explorerTab = usePanelStore((state) => state.explorerTab);
-  const isOpen = usePanelStore((state) => selectIsFileExplorerOpen(state, { isCompact: isMobile }));
+  const isPanelGated = subscribeWhen === "changes-panel-open";
+  const explorerTab = usePanelStore((state) => (isPanelGated ? state.explorerTab : "changes"));
+  const isOpen = usePanelStore((state) =>
+    isPanelGated ? selectIsFileExplorerOpen(state, { isCompact: isMobile }) : true,
+  );
   const hookInstanceId = useId();
   const normalizedCompare = useMemo(
     () => normalizeCheckoutDiffCompare({ mode, baseRef, ignoreWhitespace }),
@@ -84,7 +89,7 @@ export function useCheckoutDiffQuery({
     if (!client || !isConnected || !cwd || !enabled) {
       return;
     }
-    if (!isOpen || explorerTab !== "changes") {
+    if (subscribeWhen === "changes-panel-open" && (!isOpen || explorerTab !== "changes")) {
       return;
     }
 
@@ -175,6 +180,7 @@ export function useCheckoutDiffQuery({
     enabled,
     isOpen,
     explorerTab,
+    subscribeWhen,
     hookInstanceId,
     serverId,
     compareMode,
