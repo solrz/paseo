@@ -97,7 +97,11 @@ const {
 
   const hoistedMockClient = {
     isConnected: true,
-    getCheckoutStatus: vi.fn(async () => ({ currentBranch: "main" })),
+    getCheckoutStatus: vi.fn(
+      async (): Promise<{ currentBranch: string | null }> => ({
+        currentBranch: "main",
+      }),
+    ),
     getBranchSuggestions: vi.fn(async () => ({ branches: ["main", "dev", "feat/x"] })),
     searchGitHub: vi.fn(async () => ({
       items: [hoistedPrItem, hoistedPrItemB],
@@ -672,7 +676,7 @@ describe("NewWorkspaceScreen picker payload", () => {
     });
   });
 
-  it("sends no new fields when nothing is selected (default)", async () => {
+  it("uses the loaded current branch as the selected branch", async () => {
     renderScreen();
     await flush();
 
@@ -684,10 +688,22 @@ describe("NewWorkspaceScreen picker payload", () => {
     expect(call).toMatchObject({
       cwd: "/repo",
       worktreeSlug: "gentle-slug",
+      action: "branch-off",
+      refName: "main",
     });
-    expect(call).not.toHaveProperty("refName");
-    expect(call).not.toHaveProperty("action");
     expect(call).not.toHaveProperty("githubPrNumber");
+  });
+
+  it("requires a branch selection when the current branch is unavailable", async () => {
+    mockClient.getCheckoutStatus.mockResolvedValueOnce({ currentBranch: null });
+    renderScreen();
+    await flush();
+
+    click(await findByTestId("test-composer-submit"));
+    await flush();
+
+    expect(mockClient.createPaseoWorktree).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("Choose a branch to start from");
   });
 
   it("opens the new workspace draft tab as soon as the worktree is ready", async () => {

@@ -194,6 +194,15 @@ function pickerItemTriggerLabel(item: PickerItem): string {
   return item.kind === "branch" ? item.name : formatPrLabel(item.item);
 }
 
+function resolveSelectedPickerItem(input: {
+  pickerSelection: PickerSelection | null;
+  currentBranch: string | null | undefined;
+}): PickerItem | null {
+  if (input.pickerSelection) return input.pickerSelection.item;
+  const currentBranch = input.currentBranch?.trim();
+  return currentBranch ? { kind: "branch", name: currentBranch } : null;
+}
+
 function syncPickerPrAttachment(input: {
   attachments: ComposerAttachment[];
   previousPickerPrNumber: number | null;
@@ -436,7 +445,6 @@ export function NewWorkspaceScreen({
 
   const displayName = displayNameProp?.trim() ?? "";
   const workspace = createdWorkspace;
-  const selectedItem = pickerSelection?.item ?? null;
   const isPending = pendingAction !== null;
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -476,7 +484,10 @@ export function NewWorkspaceScreen({
     refetchOnWindowFocus: false,
   });
 
-  const currentBranch = checkoutStatusQuery.data?.currentBranch ?? null;
+  const selectedItem = resolveSelectedPickerItem({
+    pickerSelection,
+    currentBranch: checkoutStatusQuery.data?.currentBranch,
+  });
 
   const branchSuggestionsQuery = useQuery({
     queryKey: ["branch-suggestions", serverId, sourceDirectory, debouncedPickerSearchQuery],
@@ -527,8 +538,8 @@ export function NewWorkspaceScreen({
 
   const triggerLabel = useMemo(() => {
     if (selectedItem) return pickerItemTriggerLabel(selectedItem);
-    return currentBranch ?? "main";
-  }, [currentBranch, selectedItem]);
+    return "Select branch";
+  }, [selectedItem]);
 
   const selectedOptionId = useMemo(() => {
     if (!selectedItem) return "";
@@ -588,6 +599,9 @@ export function NewWorkspaceScreen({
   const buildCreateWorktreeInput = useCallback(
     (input: { cwd: string; attachments: AgentAttachment[] }) => {
       const checkoutRequest = pickerItemToCheckoutRequest(selectedItem);
+      if (!checkoutRequest) {
+        throw new Error("Choose a branch to start from");
+      }
 
       return {
         cwd: input.cwd,
