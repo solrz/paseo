@@ -74,13 +74,10 @@ import type { GitHubSearchItem } from "@server/shared/messages";
 import type {
   AttachmentMetadata,
   ComposerAttachment,
+  GeneratedReviewComposerAttachment,
   UserComposerAttachment,
 } from "@/attachments/types";
-import {
-  isGeneratedReviewAttachment,
-  stripGeneratedReviewAttachments,
-  type GeneratedReviewComposerAttachment,
-} from "@/attachments/composer-attachment-utils";
+import { stripGeneratedReviewAttachments } from "@/attachments/composer-attachment-utils";
 import { useReviewDraftStore } from "@/stores/review-draft-store";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
@@ -1143,14 +1140,7 @@ export function Composer({
     generatedAttachmentKey,
     suppressedGeneratedAttachmentKey,
   ]);
-  const setSelectedAttachments = useCallback(
-    (updater: AttachmentListUpdater) => {
-      onChangeAttachments((currentAttachments) => {
-        return typeof updater === "function" ? updater(currentAttachments) : updater;
-      });
-    },
-    [onChangeAttachments],
-  );
+  const setSelectedAttachments = onChangeAttachments;
   const [cursorIndex, setCursorIndex] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
@@ -1296,7 +1286,7 @@ export function Composer({
   const clearIncludedReviewDrafts = useCallback(
     (attachments: readonly ComposerAttachment[]) => {
       for (const attachment of attachments) {
-        if (isGeneratedReviewAttachment(attachment)) {
+        if (attachment.kind === "review") {
           clearReviewDraft({ key: attachment.reviewDraftKey });
         }
       }
@@ -1324,7 +1314,7 @@ export function Composer({
       setUserInput("");
       setSelectedAttachments([]);
       setSuppressedGeneratedAttachmentKey(null);
-      clearIncludedReviewDrafts(attachments);
+      clearIncludedReviewDrafts(queuedAttachments);
     },
     [
       agentId,

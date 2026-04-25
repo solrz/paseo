@@ -275,7 +275,6 @@ function DiffGutterCell({
     >
       <Text style={textStyle}>{formatDiffGutterText(lineNumber)}</Text>
     </InlineReviewGutterCell>
-
   );
 }
 
