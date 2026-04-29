@@ -12,6 +12,18 @@ export interface WorktreeListItem {
   agent: string;
 }
 
+interface AgentListEntry {
+  agent: {
+    id: string;
+    cwd: string;
+  };
+}
+
+interface WorktreePayload {
+  worktreePath: string;
+  branchName?: string | null;
+}
+
 /** Shorten home directory in path */
 function shortenPath(path: string): string {
   const home = process.env.HOME;
@@ -77,7 +89,7 @@ export async function runLsCommand(
 
   try {
     const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } });
-    const agents = agentsPayload.entries.map((entry) => entry.agent);
+    const agents = (agentsPayload.entries as AgentListEntry[]).map((entry) => entry.agent);
 
     // Get worktree list from daemon
     const response = await client.getPaseoWorktreeList({});
@@ -100,7 +112,7 @@ export async function runLsCommand(
       }
     }
 
-    const items: WorktreeListItem[] = response.worktrees.map((wt) => ({
+    const items: WorktreeListItem[] = (response.worktrees as WorktreePayload[]).map((wt) => ({
       name: extractWorktreeName(wt.worktreePath),
       branch: wt.branchName ?? "-",
       cwd: shortenPath(wt.worktreePath),

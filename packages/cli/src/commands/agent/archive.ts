@@ -14,6 +14,15 @@ export interface AgentArchiveResult {
   archivedAt: string;
 }
 
+interface AgentListEntry {
+  agent: {
+    id: string;
+    title?: string | null;
+    status: string;
+    archivedAt?: string | null;
+  };
+}
+
 /** Schema for archive command output */
 export const archiveSchema: OutputSchema<AgentArchiveResult> = {
   idField: "agentId",
@@ -70,7 +79,7 @@ export async function runArchiveCommand(
 
   try {
     const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } });
-    const agents = agentsPayload.entries.map((entry) => entry.agent);
+    const agents = (agentsPayload.entries as AgentListEntry[]).map((entry) => entry.agent);
     const agentId = resolveAgentId(agentIdArg, agents);
     if (!agentId) {
       const error: CommandError = {

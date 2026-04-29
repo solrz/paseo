@@ -12,6 +12,12 @@ export interface TerminalLsOptions extends TerminalCommandOptions {
   cwd?: string;
 }
 
+interface TerminalPayload {
+  id: string;
+  name: string;
+  cwd?: string;
+}
+
 export async function runLsCommand(
   options: TerminalLsOptions,
   _command: Command,
@@ -24,7 +30,9 @@ export async function runLsCommand(
       cwd === undefined ? await client.listTerminals() : await client.listTerminals(cwd);
     return {
       type: "list",
-      data: payload.terminals.map((terminal) => toTerminalRow(terminal, payload.cwd ?? cwd)),
+      data: (payload.terminals as TerminalPayload[]).map((terminal) =>
+        toTerminalRow(terminal, payload.cwd ?? cwd),
+      ),
       schema: terminalSchema,
     };
   } catch (err) {

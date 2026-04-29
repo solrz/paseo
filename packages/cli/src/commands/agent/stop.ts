@@ -14,6 +14,15 @@ export interface StopResult {
   agentIds: string[];
 }
 
+interface AgentListEntry {
+  agent: {
+    id: string;
+    cwd: string;
+    status: string;
+    archivedAt?: string | null;
+  };
+}
+
 /** Schema for stop command output */
 export const stopSchema: OutputSchema<StopResult> = {
   // For quiet mode, output the stopped agent IDs (one per line)
@@ -68,7 +77,7 @@ export async function runStopCommand(
 
   try {
     const fetchPayload = await client.fetchAgents({ filter: { includeArchived: true } });
-    let agents = fetchPayload.entries.map((entry) => entry.agent);
+    let agents = (fetchPayload.entries as AgentListEntry[]).map((entry) => entry.agent);
     const stoppedIds: string[] = [];
 
     if (options.all) {

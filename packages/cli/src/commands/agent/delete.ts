@@ -21,6 +21,15 @@ export interface DeleteResult {
   agentIds: string[];
 }
 
+interface AgentListEntry {
+  agent: {
+    id: string;
+    cwd: string;
+    status: string;
+    archivedAt?: string | null;
+  };
+}
+
 export const deleteSchema: OutputSchema<DeleteResult> = {
   idField: (item) => item.agentIds.join("\n"),
   columns: [{ header: "DELETED", field: "deletedCount" }],
@@ -64,7 +73,7 @@ export async function runDeleteCommand(
 
   try {
     const fetchPayload = await client.fetchAgents({ filter: { includeArchived: true } });
-    let agents = fetchPayload.entries.map((entry) => entry.agent);
+    let agents = (fetchPayload.entries as AgentListEntry[]).map((entry) => entry.agent);
     const deletedIds: string[] = [];
 
     if (options.all) {

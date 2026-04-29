@@ -12,6 +12,14 @@ export interface ModelListItem {
   thinkingOptions: string;
 }
 
+interface ProviderModelPayload {
+  label: string;
+  id: string;
+  description?: string | null;
+  thinkingOptions?: Array<{ id: string }> | null;
+  defaultThinkingOptionId?: string | null;
+}
+
 /** Schema for provider models output */
 export const providerModelsSchema: OutputSchema<ModelListItem> = {
   idField: "id",
@@ -61,7 +69,7 @@ export async function runModelsCommand(
       };
     }
 
-    const models: ModelListItem[] = (result.models ?? []).map((m) => ({
+    const models: ModelListItem[] = ((result.models ?? []) as ProviderModelPayload[]).map((m) => ({
       model: m.label,
       id: m.id,
       description: m.description ?? "",

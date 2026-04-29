@@ -12,6 +12,7 @@ export type WorkspaceTabTarget =
   | { kind: "agent"; agentId: string }
   | { kind: "terminal"; terminalId: string }
   | { kind: "file"; path: string }
+  | { kind: "preview"; url: string }
   | { kind: "setup"; workspaceId: string };
 
 export interface WorkspaceTab {

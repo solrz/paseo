@@ -15,6 +15,11 @@ export interface WorktreeArchiveResult {
   removedAgents: string[];
 }
 
+interface WorktreePayload {
+  worktreePath: string;
+  branchName?: string | null;
+}
+
 /** Schema for archive command output */
 export const archiveSchema: OutputSchema<WorktreeArchiveResult> = {
   idField: "name",
@@ -77,7 +82,7 @@ export async function runArchiveCommand(
     }
 
     // Find the worktree by name or branch
-    const worktree = listResponse.worktrees.find((wt) => {
+    const worktree = (listResponse.worktrees as WorktreePayload[]).find((wt) => {
       const name = path.basename(wt.worktreePath);
       return name === nameArg || wt.branchName === nameArg;
     });
