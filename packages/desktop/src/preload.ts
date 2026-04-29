@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
         };
       },
       setBadgeCount: (count?: number) => ipcRenderer.invoke("paseo:window:setBadgeCount", count),
+      captureRegion: (rect: { x: number; y: number; width: number; height: number }) =>
+        ipcRenderer.invoke("paseo:window:captureRegion", rect),
     }),
   },
   dialog: {

@@ -175,6 +175,33 @@ export function registerWindowManager(): void {
     }
   });
 
+  ipcMain.handle("paseo:window:captureRegion", async (event, rawRect?: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) {
+      throw new Error("No window is available for capture.");
+    }
+    if (!rawRect || typeof rawRect !== "object") {
+      throw new Error("Capture region is required.");
+    }
+
+    const rect = rawRect as Partial<Record<"x" | "y" | "width" | "height", unknown>>;
+    const x = typeof rect.x === "number" ? rect.x : Number.NaN;
+    const y = typeof rect.y === "number" ? rect.y : Number.NaN;
+    const width = typeof rect.width === "number" ? rect.width : Number.NaN;
+    const height = typeof rect.height === "number" ? rect.height : Number.NaN;
+    if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+      throw new Error("Capture region must have positive numeric x, y, width, and height.");
+    }
+
+    const image = await win.capturePage({
+      x: Math.round(x),
+      y: Math.round(y),
+      width: Math.round(width),
+      height: Math.round(height),
+    });
+    return image.toDataURL();
+  });
+
   ipcMain.handle("paseo:window:updateWindowControls", (event, update?: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) {

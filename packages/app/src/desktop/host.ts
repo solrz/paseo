@@ -56,6 +56,12 @@ export interface DesktopWindowBridge {
     handler: (event: TEvent) => void,
   ) => Promise<() => void> | (() => void);
   setBadgeCount?: (count?: number) => Promise<void>;
+  captureRegion?: (rect: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }) => Promise<string>;
   onDragDropEvent?: <TEvent = unknown>(
     handler: (event: TEvent) => void,
   ) => Promise<() => void> | (() => void);

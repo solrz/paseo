@@ -104,6 +104,30 @@ describe("createProviderEnv", () => {
     expect(env.CLAUDE_AGENT_SDK_VERSION).toBeUndefined();
     expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBeUndefined();
   });
+
+  test("strips parent OpenCode session env vars", () => {
+    const base = {
+      PATH: "/usr/bin",
+      OPENCODE: "1",
+      OPENCODE_CLIENT: "terminal",
+      OPENCODE_PID: "123",
+      OPENCODE_PROCESS_ROLE: "agent",
+      OPENCODE_RUN_ID: "run-id",
+      OPENCODE_SERVER_PASSWORD: "password",
+      OPENCODE_SERVER_USERNAME: "username",
+    };
+
+    const env = createProviderEnv({ baseEnv: base });
+
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.OPENCODE).toBeUndefined();
+    expect(env.OPENCODE_CLIENT).toBeUndefined();
+    expect(env.OPENCODE_PID).toBeUndefined();
+    expect(env.OPENCODE_PROCESS_ROLE).toBeUndefined();
+    expect(env.OPENCODE_RUN_ID).toBeUndefined();
+    expect(env.OPENCODE_SERVER_PASSWORD).toBeUndefined();
+    expect(env.OPENCODE_SERVER_USERNAME).toBeUndefined();
+  });
 });
 
 describe("ProviderOverrideSchema", () => {

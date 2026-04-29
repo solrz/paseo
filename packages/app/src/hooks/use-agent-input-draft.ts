@@ -16,6 +16,30 @@ type AttachmentUpdater =
   | ComposerAttachment[]
   | ((prev: ComposerAttachment[]) => ComposerAttachment[]);
 
+const liveDraftAttachmentSetters = new Map<string, (updater: AttachmentUpdater) => void>();
+const liveDraftTextSetters = new Map<string, (updater: (prev: string) => string) => void>();
+
+export function appendAttachmentToLiveDraft(
+  draftKey: string,
+  attachment: ComposerAttachment,
+): boolean {
+  const setAttachments = liveDraftAttachmentSetters.get(draftKey);
+  if (!setAttachments) {
+    return false;
+  }
+  setAttachments((current) => [...current, attachment]);
+  return true;
+}
+
+export function appendTextToLiveDraft(draftKey: string, text: string): boolean {
+  const setText = liveDraftTextSetters.get(draftKey);
+  if (!setText) {
+    return false;
+  }
+  setText((current) => (current.trim().length > 0 ? `${current}\n\n${text}` : text));
+  return true;
+}
+
 interface AgentInputDraftComposerOptions {
   initialServerId: string | null;
   initialValues?: CreateAgentInitialValues;
@@ -204,6 +228,19 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       return updater;
     });
   }, []);
+
+  useEffect(() => {
+    liveDraftAttachmentSetters.set(draftKey, setAttachments);
+    liveDraftTextSetters.set(draftKey, setText);
+    return () => {
+      if (liveDraftAttachmentSetters.get(draftKey) === setAttachments) {
+        liveDraftAttachmentSetters.delete(draftKey);
+      }
+      if (liveDraftTextSetters.get(draftKey) === setText) {
+        liveDraftTextSetters.delete(draftKey);
+      }
+    };
+  }, [draftKey, setAttachments]);
 
   const clear = useCallback(
     (lifecycle: "sent" | "abandoned") => {

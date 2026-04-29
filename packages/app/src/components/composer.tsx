@@ -637,6 +637,7 @@ function ImageAttachmentPill({
   const handleRemove = useCallback(() => {
     onRemove(index);
   }, [onRemove, index]);
+  const label = attachment.metadata.fileName?.trim() || "Image attachment";
   return (
     <AttachmentPill
       testID="composer-image-attachment-pill"
@@ -646,7 +647,12 @@ function ImageAttachmentPill({
       removeAccessibilityLabel="Remove image attachment"
       disabled={disabled}
     >
-      <ImageAttachmentThumbnail image={attachment.metadata} />
+      <View style={styles.imagePillBody}>
+        <ImageAttachmentThumbnail image={attachment.metadata} />
+        <Text style={styles.imagePillText} numberOfLines={1}>
+          {label}
+        </Text>
+      </View>
     </AttachmentPill>
   );
 }
@@ -1768,6 +1774,20 @@ const styles = StyleSheet.create((theme: Theme) => ({
     width: 48,
     height: 48,
     backgroundColor: theme.colors.surface2,
+  },
+  imagePillBody: {
+    maxWidth: 220,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingRight: theme.spacing[2],
+    backgroundColor: theme.colors.surface1,
+  },
+  imagePillText: {
+    flexShrink: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "600",
   },
   githubPillBody: {
     minHeight: 48,
