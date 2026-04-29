@@ -280,6 +280,25 @@ async function startUpstream(): Promise<{
   };
 }
 
+async function startBodyUpstream(input: {
+  body: string;
+  contentType: string;
+}): Promise<{ port: number; server: http.Server }> {
+  const port = await findFreePort();
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, {
+      "content-type": input.contentType,
+      "content-length": Buffer.byteLength(input.body),
+    });
+    res.end(input.body);
+  });
+
+  await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
+  servers.push(server);
+
+  return { port, server };
+}
+
 /** Start an Express app with the service proxy middleware and an optional fallback. */
 async function startProxy(
   routeStore: ScriptRouteStore,
@@ -307,12 +326,12 @@ function httpGet(
   port: number,
   host: string,
   path = "/",
-): Promise<{ status: number; body: string }> {
+): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const req = http.get({ hostname: "127.0.0.1", port, path, headers: { host } }, (res) => {
       let body = "";
       res.on("data", (chunk: Buffer) => (body += chunk.toString()));
-      res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, body, headers: res.headers }));
     });
     req.on("error", reject);
   });
@@ -368,6 +387,53 @@ it("returns 502 when upstream is down", async () => {
 
   expect(res.status).toBe(502);
   expect(res.body).toBe("502 Bad Gateway");
+});
+
+it("injects preview console capture into HTML responses", async () => {
+  const upstream = await startBodyUpstream({
+    body: "<!doctype html><html><head><title>App</title></head><body>ok</body></html>",
+    contentType: "text/html; charset=utf-8",
+  });
+  const routeStore = new ScriptRouteStore();
+  routeStore.registerRoute({
+    hostname: "html-service.localhost",
+    port: upstream.port,
+    workspaceId: "workspace-html",
+    projectSlug: "html",
+    scriptName: "web",
+  });
+
+  const proxy = await startProxy(routeStore);
+  const res = await httpGet(proxy.port, `html-service.localhost:${proxy.port}`);
+
+  expect(res.status).toBe(200);
+  expect(res.body).toContain("__PASEO_PREVIEW_CONSOLE_CAPTURED__");
+  expect(res.body.indexOf("__PASEO_PREVIEW_CONSOLE_CAPTURED__")).toBeLessThan(
+    res.body.indexOf("</head>"),
+  );
+  expect(res.headers["content-length"]).toBeUndefined();
+});
+
+it("does not inject preview console capture into non-HTML responses", async () => {
+  const upstream = await startBodyUpstream({
+    body: '{"ok":true}',
+    contentType: "application/json",
+  });
+  const routeStore = new ScriptRouteStore();
+  routeStore.registerRoute({
+    hostname: "json-service.localhost",
+    port: upstream.port,
+    workspaceId: "workspace-json",
+    projectSlug: "json",
+    scriptName: "api",
+  });
+
+  const proxy = await startProxy(routeStore);
+  const res = await httpGet(proxy.port, `json-service.localhost:${proxy.port}`);
+
+  expect(res.status).toBe(200);
+  expect(res.body).toBe('{"ok":true}');
+  expect(res.body).not.toContain("__PASEO_PREVIEW_CONSOLE_CAPTURED__");
 });
 
 // ---------------------------------------------------------------------------

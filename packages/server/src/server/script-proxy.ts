@@ -20,6 +20,8 @@ const HOP_BY_HOP_HEADERS = new Set([
   "trailer",
 ]);
 
+const PREVIEW_CONSOLE_CAPTURE_SCRIPT = `<script>(function(){if(window.__PASEO_PREVIEW_CONSOLE_CAPTURED__)return;window.__PASEO_PREVIEW_CONSOLE_CAPTURED__=true;function serialize(value){try{if(value instanceof Error)return{message:value.message,stack:value.stack||null};if(typeof value==="string")return{message:value,stack:null};return{message:JSON.stringify(value),stack:null};}catch{return{message:String(value),stack:null};}}function emit(kind,args){try{var items=Array.prototype.slice.call(args||[]).map(serialize);var primary=items.find(function(item){return item.message;})||{message:"Console error",stack:null};window.parent&&window.parent.postMessage({type:"paseo_preview_console_error",kind:kind,message:primary.message,stack:primary.stack,args:items,url:window.location.href,timestamp:Date.now()},"*");}catch{}}var originalError=console.error;console.error=function(){emit("console.error",arguments);return originalError.apply(console,arguments);};window.addEventListener("error",function(event){emit("window.error",[event.error||event.message]);});window.addEventListener("unhandledrejection",function(event){emit("unhandledrejection",[event.reason||"Unhandled promise rejection"]);});})();</script>`;
+
 // ---------------------------------------------------------------------------
 // ScriptRouteStore
 // ---------------------------------------------------------------------------
@@ -160,6 +162,26 @@ function stripHopByHopHeaders(
   return out;
 }
 
+function shouldInjectPreviewConsoleCapture(headers: http.IncomingHttpHeaders): boolean {
+  const contentType = headers["content-type"];
+  const contentEncoding = headers["content-encoding"];
+  return (
+    typeof contentType === "string" &&
+    contentType.toLowerCase().includes("text/html") &&
+    contentEncoding === undefined
+  );
+}
+
+function injectPreviewConsoleCapture(html: string): string {
+  if (html.includes("__PASEO_PREVIEW_CONSOLE_CAPTURED__")) {
+    return html;
+  }
+  if (/<head\b[^>]*>/i.test(html)) {
+    return html.replace(/<head\b[^>]*>/i, (match) => `${match}${PREVIEW_CONSOLE_CAPTURE_SCRIPT}`);
+  }
+  return `${PREVIEW_CONSOLE_CAPTURE_SCRIPT}${html}`;
+}
+
 // ---------------------------------------------------------------------------
 // createScriptProxyMiddleware
 // ---------------------------------------------------------------------------
@@ -188,6 +210,7 @@ export function createScriptProxyMiddleware({
     forwardedHeaders["x-forwarded-for"] = req.socket.remoteAddress ?? "127.0.0.1";
     forwardedHeaders["x-forwarded-host"] = hostHeader.replace(/:\d+$/, "");
     forwardedHeaders["x-forwarded-proto"] = req.protocol;
+    forwardedHeaders["accept-encoding"] = "identity";
 
     const proxyReq = http.request(
       {
@@ -199,6 +222,26 @@ export function createScriptProxyMiddleware({
       },
       (proxyRes) => {
         const responseHeaders = stripHopByHopHeaders(proxyRes.headers);
+        if (shouldInjectPreviewConsoleCapture(proxyRes.headers)) {
+          const chunks: Buffer[] = [];
+          proxyRes.on("data", (chunk: Buffer) => {
+            chunks.push(chunk);
+          });
+          proxyRes.on("end", () => {
+            const body = Buffer.concat(chunks).toString("utf8");
+            const injected = injectPreviewConsoleCapture(body);
+            delete responseHeaders["content-length"];
+            res.writeHead(proxyRes.statusCode ?? 502, responseHeaders);
+            res.end(injected);
+          });
+          proxyRes.on("error", () => {
+            if (!res.headersSent) {
+              res.writeHead(502, { "content-type": "text/plain" });
+            }
+            res.end("502 Bad Gateway");
+          });
+          return;
+        }
         res.writeHead(proxyRes.statusCode ?? 502, responseHeaders);
         proxyRes.pipe(res, { end: true });
       },
