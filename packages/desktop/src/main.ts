@@ -24,6 +24,7 @@ import {
   setupDarwinPaintRefresh,
   setupWindowResizeEvents,
   setupDefaultContextMenu,
+  setupPreviewWebviewSecurity,
   setupDragDropPrevention,
 } from "./window/window-manager.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
@@ -205,6 +206,7 @@ async function createMainWindow(): Promise<void> {
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: true,
     },
   });
 
@@ -215,6 +217,7 @@ async function createMainWindow(): Promise<void> {
   setupDarwinPaintRefresh(mainWindow);
   setupWindowResizeEvents(mainWindow);
   setupDefaultContextMenu(mainWindow);
+  setupPreviewWebviewSecurity(mainWindow);
   setupDragDropPrevention(mainWindow);
 
   mainWindow.once("ready-to-show", () => {

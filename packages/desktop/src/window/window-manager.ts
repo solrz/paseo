@@ -21,6 +21,10 @@ export interface WindowControlsOverlayState {
   foregroundColor?: string;
 }
 
+interface PreviewWebviewAttachParams {
+  partition?: string;
+}
+
 export function readWindowTheme(input: unknown): WindowTheme | null {
   if (input === "light" || input === "dark") {
     return input;
@@ -140,6 +144,24 @@ export function applyWindowControlsOverlayUpdate(input: {
 
   input.win.setTitleBarOverlay(resolveRuntimeTitleBarOverlayOptions(next));
   return next;
+}
+
+export function applyPreviewWebviewPreferences(input: {
+  webPreferences: Electron.WebPreferences;
+  params: PreviewWebviewAttachParams;
+}): boolean {
+  if (input.params.partition !== "persist:paseo-preview") {
+    return false;
+  }
+
+  delete input.webPreferences.preload;
+  input.webPreferences.nodeIntegration = false;
+  input.webPreferences.nodeIntegrationInSubFrames = false;
+  input.webPreferences.contextIsolation = true;
+  input.webPreferences.sandbox = true;
+  input.webPreferences.webSecurity = false;
+  input.webPreferences.allowRunningInsecureContent = true;
+  return true;
 }
 
 export function registerWindowManager(): void {
@@ -308,6 +330,14 @@ export function setupDefaultContextMenu(win: BrowserWindow): void {
       { role: "selectAll" },
     ]);
     menu.popup({ window: win });
+  });
+}
+
+export function setupPreviewWebviewSecurity(win: BrowserWindow): void {
+  win.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+    if (!applyPreviewWebviewPreferences({ webPreferences, params })) {
+      event.preventDefault();
+    }
   });
 }
 

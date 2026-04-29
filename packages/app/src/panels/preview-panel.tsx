@@ -13,7 +13,7 @@ import invariant from "tiny-invariant";
 import { persistAttachmentFromBlob } from "@/attachments/service";
 import { isWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
-import { getDesktopHost } from "@/desktop/host";
+import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { appendAttachmentToLiveDraft, appendTextToLiveDraft } from "@/hooks/use-agent-input-draft";
 import { usePaneContext } from "@/panels/pane-context";
 import type { PanelRegistration } from "@/panels/panel-registry";
@@ -37,6 +37,20 @@ const iframeStyle: CSSProperties = {
   flex: 1,
   backgroundColor: "white",
 };
+
+const webviewStyle: CSSProperties = {
+  ...iframeStyle,
+  display: "flex",
+};
+
+interface PreviewWebviewProps extends React.HTMLAttributes<HTMLElement> {
+  key: React.Key;
+  src: string;
+  partition: string;
+  disablewebsecurity: true;
+  allowpopups: true;
+  webpreferences: string;
+}
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const ThemedRotateCw = withUnistyles(RotateCw);
@@ -266,6 +280,7 @@ function PreviewPanel() {
   }, [target.url]);
 
   const previewUrl = target.url;
+  const useDesktopWebview = isElectronRuntime();
   const submitUrl = useCallback(() => {
     const nextUrl = normalizePreviewUrl(draftUrl);
     if (!nextUrl || nextUrl === previewUrl) {
@@ -511,6 +526,19 @@ function PreviewPanel() {
     if (!isWeb) {
       return null;
     }
+    if (useDesktopWebview) {
+      const webviewProps: PreviewWebviewProps = {
+        key: frameKey,
+        src: previewUrl,
+        style: webviewStyle,
+        title: "App preview",
+        partition: "persist:paseo-preview",
+        disablewebsecurity: true,
+        allowpopups: true,
+        webpreferences: "contextIsolation=yes, sandbox=yes, nodeIntegration=no",
+      };
+      return React.createElement("webview", webviewProps);
+    }
     return React.createElement("iframe", {
       key: frameKey,
       ref: iframeRef,
@@ -521,7 +549,7 @@ function PreviewPanel() {
       // eslint-disable-next-line react/iframe-missing-sandbox
       sandbox: "allow-forms allow-modals allow-popups allow-same-origin allow-scripts",
     });
-  }, [frameKey, previewUrl]);
+  }, [frameKey, previewUrl, useDesktopWebview]);
 
   return (
     <View style={styles.container} testID="workspace-preview-panel">

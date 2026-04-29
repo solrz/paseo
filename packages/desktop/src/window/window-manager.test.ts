@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   applyWindowControlsOverlayUpdate,
+  applyPreviewWebviewPreferences,
   createWindowControlsOverlayState,
   getMainWindowChromeOptions,
   getTitleBarOverlayOptions,
@@ -133,6 +134,45 @@ describe("window-manager", () => {
         symbolColor: "#e4e4e7",
         height: 47,
       });
+    });
+  });
+
+  describe("applyPreviewWebviewPreferences", () => {
+    it("locks preview webviews to a safe guest configuration with relaxed CORS", () => {
+      const webPreferences: Electron.WebPreferences = {
+        preload: "/tmp/evil.js",
+        nodeIntegration: true,
+        nodeIntegrationInSubFrames: true,
+        contextIsolation: false,
+        sandbox: false,
+      };
+
+      const allowed = applyPreviewWebviewPreferences({
+        webPreferences,
+        params: {
+          src: "http://localhost:5173",
+          partition: "persist:paseo-preview",
+        },
+      });
+
+      expect(allowed).toBe(true);
+      expect(webPreferences).toEqual({
+        nodeIntegration: false,
+        nodeIntegrationInSubFrames: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: false,
+        allowRunningInsecureContent: true,
+      });
+    });
+
+    it("rejects webviews outside the preview partition", () => {
+      expect(
+        applyPreviewWebviewPreferences({
+          webPreferences: {},
+          params: { src: "https://example.com", partition: "other" },
+        }),
+      ).toBe(false);
     });
   });
 
