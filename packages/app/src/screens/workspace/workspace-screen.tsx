@@ -134,6 +134,7 @@ import { useContainerWidthBelow } from "@/hooks/use-container-width";
 const TERMINALS_QUERY_STALE_TIME = 5_000;
 const WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS = 30_000;
 const DEFAULT_WORKSPACE_PREVIEW_URL = "http://localhost:5173";
+const PREVIEW_SCRIPT_NAME_PRIORITY = new Set(["app", "web", "dev", "website", "preview"]);
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
 const EMPTY_SET = new Set<string>();
@@ -228,6 +229,35 @@ function getFallbackTabOptionDescription(tab: WorkspaceTabDescriptor): string {
     return tab.target.url;
   }
   return tab.target.path;
+}
+
+function getWorkspacePreviewTarget(workspace: WorkspaceDescriptor | null | undefined): {
+  url: string;
+  scriptName: string | null;
+  isRunning: boolean;
+} {
+  const serviceScripts = (workspace?.scripts ?? [])
+    .filter((script) => (script.type ?? "service") === "service")
+    .map((script) => ({
+      script,
+      url: script.proxyUrl ?? (script.port !== null ? `http://localhost:${script.port}` : null),
+    }))
+    .filter((entry): entry is { script: WorkspaceDescriptor["scripts"][number]; url: string } =>
+      Boolean(entry.url),
+    );
+
+  const prioritizedScript = serviceScripts.find((entry) =>
+    PREVIEW_SCRIPT_NAME_PRIORITY.has(entry.script.scriptName.toLowerCase()),
+  );
+  const selectedScript = prioritizedScript ?? serviceScripts[0] ?? null;
+  if (!selectedScript) {
+    return { url: DEFAULT_WORKSPACE_PREVIEW_URL, scriptName: null, isRunning: false };
+  }
+  return {
+    url: selectedScript.url,
+    scriptName: selectedScript.script.scriptName,
+    isRunning: selectedScript.script.lifecycle === "running",
+  };
 }
 
 interface MobileWorkspaceTabSwitcherProps {
@@ -2558,14 +2588,55 @@ function WorkspaceScreenContent({
     () => focusedPaneTabState.pane?.id ?? null,
     [focusedPaneTabState.pane],
   );
+  const previewTarget = useMemo(
+    () => getWorkspacePreviewTarget(workspaceDescriptor),
+    [workspaceDescriptor],
+  );
   const handleOpenPreview = useCallback(() => {
     if (!persistenceKey) {
       return;
     }
 
-    const target: WorkspaceTabTarget = { kind: "preview", url: DEFAULT_WORKSPACE_PREVIEW_URL };
-    const hasPreviewTab = uiTabs.some((tab) => workspaceTabTargetsEqual(tab.target, target));
-    if (canRenderDesktopPaneSplits && focusedPaneId && !hasPreviewTab) {
+    if (previewTarget.scriptName && !previewTarget.isRunning && client && isConnected) {
+      const scriptName = previewTarget.scriptName;
+      void (async () => {
+        try {
+          const result = await client.startWorkspaceScript(normalizedWorkspaceId, scriptName);
+          if (result.error) {
+            throw new Error(result.error);
+          }
+          if (result.terminalId) {
+            const terminalId = result.terminalId;
+            setPendingScriptTerminalIds((pendingTerminalIds) => {
+              const nextTerminalIds = new Map(pendingTerminalIds);
+              nextTerminalIds.set(terminalId, terminalsQuery.dataUpdatedAt);
+              return nextTerminalIds;
+            });
+          }
+          await queryClient.invalidateQueries({ queryKey: terminalsQueryKey });
+        } catch (error) {
+          toast.show(error instanceof Error ? error.message : `Failed to start ${scriptName}`, {
+            variant: "error",
+          });
+        }
+      })();
+    }
+
+    const target: WorkspaceTabTarget = { kind: "preview", url: previewTarget.url };
+    const existingPreviewTabs = uiTabs.filter((tab) => tab.target.kind === "preview");
+    const existingPreviewTab = existingPreviewTabs[0];
+    if (existingPreviewTab) {
+      for (const previewTab of existingPreviewTabs) {
+        if (!workspaceTabTargetsEqual(previewTab.target, target)) {
+          retargetWorkspaceTab(persistenceKey, previewTab.tabId, target);
+        }
+      }
+      focusWorkspaceTab(persistenceKey, existingPreviewTab.tabId);
+      navigateToTabId(existingPreviewTab.tabId);
+      return;
+    }
+
+    if (canRenderDesktopPaneSplits && focusedPaneId) {
       const paneId = splitWorkspacePaneEmpty(persistenceKey, {
         targetPaneId: focusedPaneId,
         position: "right",
@@ -2581,12 +2652,22 @@ function WorkspaceScreenContent({
     }
   }, [
     canRenderDesktopPaneSplits,
+    client,
     focusedPaneId,
     focusWorkspacePane,
+    focusWorkspaceTab,
+    isConnected,
     navigateToTabId,
+    normalizedWorkspaceId,
     openWorkspaceTabFocused,
     persistenceKey,
+    previewTarget,
+    queryClient,
+    retargetWorkspaceTab,
     splitWorkspacePaneEmpty,
+    terminalsQuery.dataUpdatedAt,
+    terminalsQueryKey,
+    toast,
     uiTabs,
   ]);
   const focusedPaneTabIds = useMemo(() => tabs.map((tab) => tab.tabId), [tabs]);
